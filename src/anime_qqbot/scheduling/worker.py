@@ -14,6 +14,8 @@ class JobExecutor(Protocol):
 class JobPlanner(Protocol):
     async def plan_airing(self, now: datetime) -> int: ...
 
+    async def plan_summaries(self, now: datetime) -> int: ...
+
 
 class Worker:
     def __init__(
@@ -32,12 +34,14 @@ class Worker:
         self._scan_seconds = scan_seconds
         self._planner = planner
         self._stopping = asyncio.Event()
+        self.ready = False
 
     async def run_once(self) -> bool:
         now = self._clock.now()
         await self._repository.heartbeat(self._id, "worker", now)
         if self._planner is not None:
             await self._planner.plan_airing(now)
+            await self._planner.plan_summaries(now)
         job = await self._repository.claim(self._id, now)
         if job is None:
             return False
@@ -46,12 +50,16 @@ class Worker:
         return True
 
     async def run(self) -> None:
-        while not self._stopping.is_set():
-            await self.run_once()
-            try:
-                await asyncio.wait_for(self._stopping.wait(), timeout=self._scan_seconds)
-            except TimeoutError:
-                pass
+        self.ready = True
+        try:
+            while not self._stopping.is_set():
+                await self.run_once()
+                try:
+                    await asyncio.wait_for(self._stopping.wait(), timeout=self._scan_seconds)
+                except TimeoutError:
+                    pass
+        finally:
+            self.ready = False
 
     def stop(self) -> None:
         self._stopping.set()
