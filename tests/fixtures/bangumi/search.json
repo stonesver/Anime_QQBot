@@ -1,0 +1,9 @@
+{
+  "total": 2,
+  "limit": 20,
+  "offset": 0,
+  "data": [
+    {"id": 1001, "name": "Summer Story", "name_cn": "夏日物语", "date": "2026-07-03", "type": 2, "nsfw": false, "images": {"large": "https://example.test/1001.jpg"}},
+    {"id": 1002, "name": "Hidden Story", "name_cn": "", "date": "2026-07-04", "type": 2, "nsfw": true}
+  ]
+}

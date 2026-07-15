@@ -1,0 +1,8 @@
+[
+  {
+    "weekday": {"en": "Mon", "cn": "星期一", "ja": "月耀日", "id": 1},
+    "items": [
+      {"id": 1001, "name": "Summer Story", "name_cn": "夏日物语", "air_date": "2026-07-03", "nsfw": false}
+    ]
+  }
+]
