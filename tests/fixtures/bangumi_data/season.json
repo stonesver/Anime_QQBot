@@ -1,0 +1,44 @@
+{
+  "siteMeta": {
+    "bangumi": {"title": "番组计划", "urlTemplate": "https://bgm.tv/subject/{{id}}", "type": "info"},
+    "bilibili": {"title": "哔哩哔哩", "urlTemplate": "https://example.test/{{id}}", "type": "onair", "regions": ["CN"]}
+  },
+  "items": [
+    {
+      "title": "Summer Story",
+      "titleTranslate": {"zh-Hans": ["夏日物语"]},
+      "type": "tv",
+      "lang": "ja",
+      "officialSite": "https://example.test/anime",
+      "begin": "2026-07-03T16:30:00.000Z",
+      "broadcast": "R/2026-07-03T16:30:00.000Z/P7D",
+      "end": "",
+      "sites": [
+        {"site": "bangumi", "id": "1001"},
+        {"site": "bilibili", "id": "media-1", "begin": "2026-07-04T04:00:00.000Z", "regions": ["CN"]}
+      ]
+    },
+    {
+      "title": "Date Only Story",
+      "titleTranslate": {"zh-Hans": ["只有日期"]},
+      "type": "tv",
+      "lang": "ja",
+      "officialSite": "https://example.test/date-only",
+      "begin": "2026-08-01T12:00:00.000Z",
+      "broadcast": "not-a-rule",
+      "end": "",
+      "sites": [{"site": "bangumi", "id": "1002"}]
+    },
+    {
+      "title": "No Strong Mapping",
+      "titleTranslate": {"zh-Hans": ["不能猜测"]},
+      "type": "tv",
+      "lang": "ja",
+      "officialSite": "https://example.test/no-map",
+      "begin": "2026-07-05T12:00:00.000Z",
+      "broadcast": "R/2026-07-05T12:00:00.000Z/P7D",
+      "end": "",
+      "sites": [{"site": "bilibili", "id": "media-2", "regions": ["CN"]}]
+    }
+  ]
+}

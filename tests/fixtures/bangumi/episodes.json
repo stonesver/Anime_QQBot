@@ -1,0 +1,9 @@
+{
+  "total": 2,
+  "limit": 100,
+  "offset": 0,
+  "data": [
+    {"id": 2001, "subject_id": 1001, "sort": 1, "airdate": "2026-07-03", "type": 0},
+    {"id": 2002, "subject_id": 1001, "sort": 2, "airdate": "", "type": 0}
+  ]
+}
