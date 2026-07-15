@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncIterator, Iterator
+from uuid import uuid4
 
 import pytest
 from alembic import command
@@ -30,12 +31,13 @@ async def session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
 async def test_group_openid_is_unique(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    group_openid = f"group-{uuid4()}"
     async with session_factory() as session:
-        session.add(Group(group_openid="group-1"))
+        session.add(Group(group_openid=group_openid))
         await session.commit()
 
     async with session_factory() as session:
-        session.add(Group(group_openid="group-1"))
+        session.add(Group(group_openid=group_openid))
         with pytest.raises(IntegrityError):
             await session.commit()
 
@@ -43,11 +45,12 @@ async def test_group_openid_is_unique(
 async def test_platform_event_id_is_unique(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
+    platform_event_id = f"event-{uuid4()}"
     async with session_factory() as session:
-        session.add(ProcessedEvent(platform_event_id="event-1", event_type="GROUP_AT"))
+        session.add(ProcessedEvent(platform_event_id=platform_event_id, event_type="GROUP_AT"))
         await session.commit()
 
     async with session_factory() as session:
-        session.add(ProcessedEvent(platform_event_id="event-1", event_type="GROUP_AT"))
+        session.add(ProcessedEvent(platform_event_id=platform_event_id, event_type="GROUP_AT"))
         with pytest.raises(IntegrityError):
             await session.commit()
