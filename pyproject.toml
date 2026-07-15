@@ -17,6 +17,7 @@ dependencies = [
   "pydantic-settings>=2.7,<3",
   "sqlalchemy[asyncio]>=2.0,<3",
   "tzdata>=2025.1",
+  "websockets>=15,<17",
 ]
 
 [dependency-groups]
@@ -51,4 +52,3 @@ python_version = "3.12"
 strict = true
 packages = ["anime_qqbot"]
 mypy_path = "src"
-
