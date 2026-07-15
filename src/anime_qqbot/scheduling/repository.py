@@ -85,11 +85,12 @@ class ScheduleRepository:
             return job
 
     async def finish(self, job_id: int, status: str, now: datetime) -> None:
+        finished_at = now if status in {"sent", "failed", "unknown"} else None
         async with self._sessions() as session, session.begin():
             await session.execute(
                 update(NotificationJob)
                 .where(NotificationJob.id == job_id)
-                .values(status=status, finished_at=now, lease_until=None)
+                .values(status=status, finished_at=finished_at, lease_until=None)
             )
 
     async def heartbeat(self, worker_id: str, role: str, now: datetime) -> None:
