@@ -7,7 +7,13 @@ from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from anime_qqbot.persistence.base import Base
-from anime_qqbot.persistence.models import catalog, identity, runtime, subscriptions  # noqa: F401
+from anime_qqbot.persistence.models import (  # noqa: F401
+    catalog,
+    identity,
+    notifications,
+    runtime,
+    subscriptions,
+)
 
 config = context.config
 
