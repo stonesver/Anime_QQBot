@@ -1,8 +1,10 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
 
-from anime_qqbot.catalog.models import Season
+from anime_qqbot.catalog.models import AiringOccurrence, AnimeDetail, AnimeSummary, Season
 from anime_qqbot.catalog.ports import AiringProvider, BangumiProvider
-from anime_qqbot.catalog.repository import CatalogRepository
 from anime_qqbot.clock import Clock
 
 
@@ -12,12 +14,26 @@ class SyncReport:
     bangumi_data_ok: bool
 
 
+class SyncRepository(Protocol):
+    async def save_snapshot(
+        self,
+        provider: str,
+        subjects: Sequence[AnimeSummary | AnimeDetail],
+        occurrences: Sequence[AiringOccurrence],
+        synced_at: datetime,
+    ) -> None: ...
+
+    async def record_failure(
+        self, provider: str, error: Exception, failed_at: datetime
+    ) -> None: ...
+
+
 class CatalogSyncService:
     def __init__(
         self,
         bangumi: BangumiProvider,
         bangumi_data: AiringProvider,
-        repository: CatalogRepository,
+        repository: SyncRepository,
         clock: Clock,
     ) -> None:
         self._bangumi = bangumi

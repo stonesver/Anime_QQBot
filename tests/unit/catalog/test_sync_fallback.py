@@ -1,8 +1,15 @@
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
 import pytest
 
-from anime_qqbot.catalog.models import AnimeSummary, Season, SeasonName
+from anime_qqbot.catalog.models import (
+    AiringOccurrence,
+    AnimeDetail,
+    AnimeSummary,
+    Season,
+    SeasonName,
+)
 from anime_qqbot.catalog.sync import CatalogSyncService
 from anime_qqbot.clock import FrozenClock
 
@@ -16,7 +23,7 @@ class FakeBangumi:
             raise RuntimeError("bangumi failed")
         return [AnimeSummary(1, "测试", "テスト", date(2026, 7, 1))]
 
-    async def episodes(self, subject_id: int) -> list[object]:
+    async def episodes(self, subject_id: int) -> list[AiringOccurrence]:
         del subject_id
         return []
 
@@ -33,7 +40,9 @@ class FakeData:
     def __init__(self, fails: bool = False) -> None:
         self.fails = fails
 
-    async def season(self, year: int, month: int) -> tuple[list[AnimeSummary], list[object]]:
+    async def season(
+        self, year: int, month: int
+    ) -> tuple[list[AnimeSummary], list[AiringOccurrence]]:
         del year, month
         if self.fails:
             raise RuntimeError("data failed")
@@ -45,12 +54,18 @@ class RecordingRepository:
         self.successes: list[str] = []
         self.failures: list[str] = []
 
-    async def save_snapshot(self, provider: str, *args: object) -> None:
-        del args
+    async def save_snapshot(
+        self,
+        provider: str,
+        subjects: Sequence[AnimeSummary | AnimeDetail],
+        occurrences: Sequence[AiringOccurrence],
+        synced_at: datetime,
+    ) -> None:
+        del subjects, occurrences, synced_at
         self.successes.append(provider)
 
-    async def record_failure(self, provider: str, *args: object) -> None:
-        del args
+    async def record_failure(self, provider: str, error: Exception, failed_at: datetime) -> None:
+        del error, failed_at
         self.failures.append(provider)
 
 
@@ -68,9 +83,9 @@ async def test_providers_fail_independently(
 ) -> None:
     repository = RecordingRepository()
     service = CatalogSyncService(
-        FakeBangumi(bangumi_fails),  # type: ignore[arg-type]
-        FakeData(data_fails),  # type: ignore[arg-type]
-        repository,  # type: ignore[arg-type]
+        FakeBangumi(bangumi_fails),
+        FakeData(data_fails),
+        repository,
         FrozenClock(datetime(2026, 7, 15, tzinfo=UTC)),
     )
 
