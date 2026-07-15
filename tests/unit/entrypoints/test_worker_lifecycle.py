@@ -18,10 +18,22 @@ class NeverExecutor:
         raise AssertionError(job)
 
 
+class RecordingPlanner:
+    async def plan_airing(self, now: datetime) -> int:
+        self.now = now
+        return 0
+
+
 async def test_worker_heartbeats_even_when_queue_is_empty() -> None:
     repository = EmptyRepository()
+    planner = RecordingPlanner()
     worker = Worker(
-        "worker-1", repository, NeverExecutor(), FrozenClock(datetime(2026, 7, 15, tzinfo=UTC))
+        "worker-1",
+        repository,
+        NeverExecutor(),
+        FrozenClock(datetime(2026, 7, 15, tzinfo=UTC)),
+        planner=planner,
     )  # type: ignore[arg-type]
     assert await worker.run_once() is False
     assert repository.seen[0] == "worker-1"
+    assert planner.now == datetime(2026, 7, 15, tzinfo=UTC)
