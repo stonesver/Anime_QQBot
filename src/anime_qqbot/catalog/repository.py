@@ -30,10 +30,11 @@ class CatalogRepository:
         async with self._sessions() as session, session.begin():
             for subject in subjects:
                 values = self._subject_values(subject, synced_at)
+                update_values = self._subject_update_values(subject, provider, values)
                 statement = insert(AnimeSubject).values(**values)
                 await session.execute(
                     statement.on_conflict_do_update(
-                        index_elements=[AnimeSubject.subject_id], set_=values
+                        index_elements=[AnimeSubject.subject_id], set_=update_values
                     )
                 )
             await session.execute(delete(AiringSchedule).where(AiringSchedule.source == provider))
@@ -115,9 +116,9 @@ class CatalogRepository:
                     ),
                 )
                 .order_by(
+                    (AiringSchedule.source == "bangumi-data").desc(),
                     AiringSchedule.air_date,
                     AiringSchedule.air_at.nullslast(),
-                    (AiringSchedule.source == "bangumi-data").desc(),
                 )
                 .limit(1)
             )
@@ -162,6 +163,19 @@ class CatalogRepository:
             "nsfw": subject.nsfw,
             "updated_at": updated_at,
         }
+
+    @staticmethod
+    def _subject_update_values(
+        subject: AnimeSummary | AnimeDetail,
+        provider: str,
+        values: dict[str, object],
+    ) -> dict[str, object]:
+        if isinstance(subject, AnimeDetail):
+            return values
+        keys = {"title_cn", "title_jp", "air_date", "updated_at"}
+        if provider == "bangumi":
+            keys.update({"image_url", "nsfw"})
+        return {key: value for key, value in values.items() if key in keys}
 
     @staticmethod
     async def _set_sync_success(session: AsyncSession, provider: str, synced_at: datetime) -> None:

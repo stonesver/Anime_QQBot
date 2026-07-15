@@ -43,10 +43,13 @@ class AnimeCatalog:
             for subject in await self._store.subjects_between(starts_on, ends_on)
             if not subject.nsfw
         ]
-        allowed_ids = {subject.subject_id for subject in subjects}
-        occurrences = [
-            item
-            for item in await self._store.occurrences_between(starts_on, ends_on)
-            if item.subject_id in allowed_ids
-        ]
-        return CatalogListing(tuple(subjects), tuple(occurrences), await self._store.freshness())
+        by_id = {subject.subject_id: subject for subject in subjects}
+        occurrences = await self._store.occurrences_between(starts_on, ends_on)
+        for subject_id in {item.subject_id for item in occurrences} - by_id.keys():
+            detail = await self._store.get_detail(subject_id)
+            if detail is not None and not detail.nsfw:
+                by_id[subject_id] = detail.as_summary()
+        occurrences = [item for item in occurrences if item.subject_id in by_id]
+        return CatalogListing(
+            tuple(by_id.values()), tuple(occurrences), await self._store.freshness()
+        )
