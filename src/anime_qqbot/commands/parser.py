@@ -25,6 +25,7 @@ class CommandParser:
         ("开启每日推送", CommandKind.ENABLE_DAILY),
         ("开启每周推送", CommandKind.ENABLE_WEEKLY),
         ("设置时区", CommandKind.SET_TIMEZONE),
+        ("补发", CommandKind.REDELIVER),
         ("搜索", CommandKind.SEARCH),
         ("番剧", CommandKind.DETAIL),
         ("订阅", CommandKind.SUBSCRIBE),
@@ -68,6 +69,8 @@ class CommandParser:
                 or not self._is_time(arguments[1])
             ):
                 return self._invalid(kind, "格式应为 开启每周推送 <星期> <HH:mm>")
+        elif kind is CommandKind.REDELIVER and (len(arguments) != 1 or not arguments[0].isdigit()):
+            return self._invalid(kind, "格式应为 补发 <任务ID>")
         return CommandIntent(kind, arguments)
 
     @staticmethod

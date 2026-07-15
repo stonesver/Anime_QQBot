@@ -1,6 +1,7 @@
 # ruff: noqa: RUF001
 
-from datetime import date
+from datetime import date, datetime
+from typing import Protocol
 from zoneinfo import ZoneInfo
 
 from anime_qqbot.catalog.models import AnimeDetail, Season, SeasonName
@@ -20,6 +21,12 @@ from anime_qqbot.qq.rendering import (
 from anime_qqbot.subscriptions.module import SubscriptionManager
 
 
+class ScheduleAdmin(Protocol):
+    async def handle(
+        self, event: QQEvent, intent: CommandIntent, now: datetime
+    ) -> OutboundMessage: ...
+
+
 class CommandHandler:
     def __init__(
         self,
@@ -29,6 +36,7 @@ class CommandHandler:
         gateway: QQGateway,
         clock: Clock,
         timezone: str = "Asia/Shanghai",
+        schedule_admin: ScheduleAdmin | None = None,
     ) -> None:
         self._router = router
         self._catalog = catalog
@@ -36,6 +44,7 @@ class CommandHandler:
         self._gateway = gateway
         self._clock = clock
         self._timezone = ZoneInfo(timezone)
+        self._schedule_admin = schedule_admin
 
     async def handle(self, event: QQEvent) -> None:
         intent = await self._router.route(event)
@@ -48,6 +57,20 @@ class CommandHandler:
         await self._gateway.reply(event, message)
 
     async def _execute(self, event: QQEvent, intent: CommandIntent) -> OutboundMessage:
+        admin_kinds = {
+            CommandKind.ENABLE_DAILY,
+            CommandKind.DISABLE_DAILY,
+            CommandKind.ENABLE_WEEKLY,
+            CommandKind.DISABLE_WEEKLY,
+            CommandKind.SET_TIMEZONE,
+            CommandKind.PUSH_STATUS,
+            CommandKind.PUSH_TODAY_NOW,
+            CommandKind.REDELIVER,
+        }
+        if intent.kind in admin_kinds:
+            if self._schedule_admin is None:
+                return OutboundMessage("推送管理模块尚未启用。")
+            return await self._schedule_admin.handle(event, intent, self._clock.now())
         today = self._clock.now().astimezone(self._timezone).date()
         if intent.kind is CommandKind.TODAY:
             value = date.fromisoformat(intent.arguments[0]) if intent.arguments else today

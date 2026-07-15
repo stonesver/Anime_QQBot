@@ -19,6 +19,7 @@ class CommandKind(StrEnum):
     SET_TIMEZONE = "set_timezone"
     PUSH_STATUS = "push_status"
     PUSH_TODAY_NOW = "push_today_now"
+    REDELIVER = "redeliver"
     HELP = "help"
 
 

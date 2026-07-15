@@ -59,6 +59,60 @@ class ScheduleRepository:
         async with self._sessions() as session, session.begin():
             return (await session.execute(statement)).scalar_one_or_none() is not None
 
+    async def disable(self, group_id: int, schedule_type: str) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(GroupSchedule)
+                .where(
+                    GroupSchedule.group_id == group_id,
+                    GroupSchedule.schedule_type == schedule_type,
+                )
+                .values(enabled=False)
+            )
+
+    async def list_for_group(self, group_id: int) -> list[GroupSchedule]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(GroupSchedule)
+                .where(GroupSchedule.group_id == group_id)
+                .order_by(GroupSchedule.schedule_type)
+            )
+            return list(rows)
+
+    async def redeliver_unknown(
+        self,
+        job_id: int,
+        group_id: int,
+        operator: str,
+        event_id: str,
+        now: datetime,
+    ) -> bool:
+        async with self._sessions() as session, session.begin():
+            original = await session.scalar(
+                select(NotificationJob).where(
+                    NotificationJob.id == job_id,
+                    NotificationJob.group_id == group_id,
+                    NotificationJob.status == "unknown",
+                )
+            )
+            if original is None:
+                return False
+            payload = dict(original.payload)
+            payload["redelivery_operator"] = operator
+            statement = (
+                insert(NotificationJob)
+                .values(
+                    group_id=group_id,
+                    business_key=f"redelivery:{job_id}:{event_id}",
+                    notification_type="manual_redelivery",
+                    available_at=now,
+                    payload=payload,
+                )
+                .on_conflict_do_nothing()
+                .returning(NotificationJob.id)
+            )
+            return (await session.execute(statement)).scalar_one_or_none() is not None
+
     async def claim(
         self, worker_id: str, now: datetime, lease: timedelta = timedelta(minutes=5)
     ) -> NotificationJob | None:

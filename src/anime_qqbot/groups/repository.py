@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -63,3 +63,9 @@ class GroupRepository:
         async with self._sessions() as session:
             result = await session.scalar(select(Group).where(Group.group_openid == group_openid))
             return result
+
+    async def set_timezone(self, group_id: int, timezone: str) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(Group).where(Group.id == group_id).values(timezone=timezone)
+            )
