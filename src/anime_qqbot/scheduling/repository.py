@@ -1,10 +1,15 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from anime_qqbot.persistence.models.notifications import GroupSchedule, NotificationJob
+from anime_qqbot.persistence.models.notifications import (
+    DeliveryAttempt,
+    GroupSchedule,
+    NotificationJob,
+)
+from anime_qqbot.persistence.models.runtime import ProcessedEvent, WorkerHeartbeat
 from anime_qqbot.scheduling.module import ScheduleSpec, next_run
 
 
@@ -78,3 +83,37 @@ class ScheduleRepository:
                 job.lease_until = now + lease
                 job.attempts += 1
             return job
+
+    async def finish(self, job_id: int, status: str, now: datetime) -> None:
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                update(NotificationJob)
+                .where(NotificationJob.id == job_id)
+                .values(status=status, finished_at=now, lease_until=None)
+            )
+
+    async def heartbeat(self, worker_id: str, role: str, now: datetime) -> None:
+        statement = insert(WorkerHeartbeat).values(worker_id=worker_id, role=role, last_seen_at=now)
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[WorkerHeartbeat.worker_id],
+                    set_={"role": role, "last_seen_at": now},
+                )
+            )
+
+    async def cleanup(self, now: datetime, event_days: int = 7, delivery_days: int = 90) -> None:
+        event_before = now - timedelta(days=event_days)
+        delivery_before = now - timedelta(days=delivery_days)
+        async with self._sessions() as session, session.begin():
+            await session.execute(
+                delete(ProcessedEvent).where(ProcessedEvent.processed_at < event_before)
+            )
+            old_jobs = select(NotificationJob.id).where(
+                NotificationJob.status.in_({"sent", "failed"}),
+                NotificationJob.finished_at < delivery_before,
+            )
+            await session.execute(
+                delete(DeliveryAttempt).where(DeliveryAttempt.job_id.in_(old_jobs))
+            )
+            await session.execute(delete(NotificationJob).where(NotificationJob.id.in_(old_jobs)))
