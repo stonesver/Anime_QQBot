@@ -39,7 +39,13 @@ async def test_two_workers_cannot_claim_same_job() -> None:
     group_id = await groups.observe(event)
     assert group_id is not None
     now = datetime.now(UTC)
-    await schedules.create_job(group_id, "airing", suffix, now, {})
+    await schedules.create_job(
+        group_id,
+        "airing",
+        suffix,
+        datetime(2000, 1, 1, tzinfo=UTC),
+        {},
+    )
 
     first, second = await asyncio.gather(
         schedules.claim("worker-a", now), schedules.claim("worker-b", now)
