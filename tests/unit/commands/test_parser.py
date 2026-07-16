@@ -41,3 +41,12 @@ def test_unknown_command_becomes_deterministic_help() -> None:
     intent = CommandParser().parse("帮我看看有什么番")
     assert intent.kind is CommandKind.HELP
     assert intent.error == "未识别命令"
+
+
+def test_parses_internal_page_and_compact_view_suffixes() -> None:
+    intent = CommandParser().parse("季度番剧 2026 夏 --view=compact --page=2")
+
+    assert intent.kind is CommandKind.SEASON
+    assert intent.arguments == ("2026", "夏")
+    assert intent.page == 2
+    assert intent.force_compact

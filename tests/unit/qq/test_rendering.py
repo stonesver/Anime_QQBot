@@ -14,6 +14,10 @@ def test_render_next_uses_expected_wording_and_target_timezone() -> None:
     assert "预计放送" in message.text
     assert "2026-07-16 00:00" in message.text
     assert "不代表" in message.text
+    assert message.markdown is not None
+    assert message.markdown.startswith("# 测试番")
+    assert "## 第 2 话" in message.markdown
+    assert [button.data for button in message.buttons] == ["番剧 1"]
 
 
 def test_renderer_refuses_nsfw_detail() -> None:

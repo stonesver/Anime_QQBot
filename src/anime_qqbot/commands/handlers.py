@@ -1,5 +1,3 @@
-# ruff: noqa: RUF001
-
 from datetime import date, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -9,14 +7,16 @@ from anime_qqbot.catalog.module import AnimeCatalog
 from anime_qqbot.clock import Clock
 from anime_qqbot.commands.models import CommandIntent, CommandKind
 from anime_qqbot.commands.router import CommandRouter
-from anime_qqbot.qq.contracts import OutboundMessage, QQEvent
+from anime_qqbot.qq.contracts import OutboundMessage, QQEvent, QQEventType
 from anime_qqbot.qq.gateway import QQGateway
 from anime_qqbot.qq.rendering import (
-    HELP_TEXT,
     render_detail,
+    render_help,
     render_listing,
     render_next,
     render_search,
+    render_subjects,
+    render_subscription_status,
 )
 from anime_qqbot.subscriptions.module import SubscriptionManager
 
@@ -47,6 +47,8 @@ class CommandHandler:
         self._schedule_admin = schedule_admin
 
     async def handle(self, event: QQEvent) -> None:
+        if event.event_type is QQEventType.BUTTON_INTERACTION:
+            await self._gateway.acknowledge_interaction(event)
         intent = await self._router.route(event)
         if intent is None:
             return
@@ -75,19 +77,40 @@ class CommandHandler:
         if intent.kind is CommandKind.TODAY:
             value = date.fromisoformat(intent.arguments[0]) if intent.arguments else today
             return render_listing(
-                f"{value.isoformat()} 番剧", await self._catalog.list_day(value), self._timezone
+                f"{value.isoformat()} 番剧",
+                await self._catalog.list_day(value),
+                self._timezone,
+                command=f"今日番剧 {value.isoformat()}",
+                page=intent.page,
+                force_compact=intent.force_compact,
             )
         if intent.kind is CommandKind.WEEK:
-            return render_listing("本周番剧", await self._catalog.list_week(today), self._timezone)
+            return render_listing(
+                "本周番剧",
+                await self._catalog.list_week(today),
+                self._timezone,
+                command="本周番剧",
+                page=intent.page,
+                force_compact=intent.force_compact,
+            )
         if intent.kind is CommandKind.SEASON:
             season = self._season(intent.arguments, today)
             return render_listing(
                 f"{season.year} 年{season.name.value}季番剧",
                 await self._catalog.list_season(season),
                 self._timezone,
+                command=f"季度番剧 {season.year} {season.name.value}",
+                page=intent.page,
+                force_compact=intent.force_compact,
             )
         if intent.kind is CommandKind.SEARCH:
-            return render_search(await self._catalog.search(" ".join(intent.arguments)))
+            query = " ".join(intent.arguments)
+            return render_search(
+                await self._catalog.search(query),
+                command=f"搜索 {query}",
+                page=intent.page,
+                force_compact=intent.force_compact,
+            )
         if intent.kind in {CommandKind.DETAIL, CommandKind.NEXT_AIRING}:
             detail = await self._resolve(" ".join(intent.arguments))
             if detail is None:
@@ -109,19 +132,24 @@ class CommandHandler:
             )
             if result.error:
                 return OutboundMessage(result.error)
-            return OutboundMessage(
-                f"{detail.title}：{result.change.value if result.change else '未变更'}"
+            return render_subscription_status(
+                detail.title,
+                result.change.value if result.change else "未变更",
             )
         if intent.kind is CommandKind.MY_SUBSCRIPTIONS:
             subject_ids = await self._subscriptions.mine(event)
             details = [await self._catalog.get_detail(item) for item in subject_ids]
-            titles = [item.title for item in details if item is not None and not item.nsfw]
-            return OutboundMessage(
-                "我的订阅：\n" + "\n".join(f"• {title}" for title in titles)
-                if titles
-                else "当前群暂无订阅。"
+            subjects = [item.as_summary() for item in details if item is not None and not item.nsfw]
+            if not subjects:
+                return OutboundMessage("当前群暂无订阅。")
+            return render_subjects(
+                "我的订阅",
+                subjects,
+                command="我的订阅",
+                page=intent.page,
+                force_compact=intent.force_compact,
             )
-        return OutboundMessage(HELP_TEXT)
+        return render_help()
 
     async def _resolve(self, value: str) -> AnimeDetail | None:
         if value.isdigit():
