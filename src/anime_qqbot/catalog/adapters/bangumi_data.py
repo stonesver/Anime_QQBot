@@ -37,7 +37,7 @@ class BangumiDataClient:
     async def season(
         self, year: int, month: int
     ) -> tuple[list[AnimeSummary], list[AiringOccurrence]]:
-        response = await self._client.get(self._data_url)
+        response = await self._client.get(self._data_url, follow_redirects=True)
         raise_for_provider_response(response)
         try:
             payload = response.json()
