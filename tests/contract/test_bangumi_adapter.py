@@ -55,6 +55,18 @@ async def test_maps_detail_calendar_and_episode_date_fallback() -> None:
     assert len(episodes) == 1 and episodes[0].date_only
 
 
+async def test_injected_client_still_uses_absolute_bangumi_url() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == "https://api.bgm.tv/calendar"
+        return httpx.Response(200, json=fixture("calendar.json"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as shared_client:
+        client = BangumiClient("anime-qqbot/test", client=shared_client)
+        calendar = await client.calendar()
+
+    assert calendar[0].subject_id == 1001
+
+
 @pytest.mark.parametrize(
     ("status", "kind"),
     [

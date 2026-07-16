@@ -36,3 +36,24 @@ async def test_fetches_and_maps_season_document() -> None:
     assert len(subjects) == 2
     assert occurrences[0].source == "bangumi-data"
     assert occurrences[0].updated_at is not None
+
+
+async def test_injected_client_follows_data_cdn_redirect() -> None:
+    payload = json.loads(FIXTURE.read_text())
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/bangumi-data@0.3/dist/data.json":
+            return httpx.Response(302, headers={"Location": "/resolved/data.json"})
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), follow_redirects=False
+    ) as shared_client:
+        client = BangumiDataClient(
+            data_url="https://unpkg.com/bangumi-data@0.3/dist/data.json",
+            client=shared_client,
+        )
+        subjects, occurrences = await client.season(2026, 7)
+
+    assert len(subjects) == 2
+    assert occurrences

@@ -24,6 +24,7 @@ class BangumiClient:
         headers = {"User-Agent": user_agent, "Accept": "application/json"}
         if access_token:
             headers["Authorization"] = f"Bearer {access_token}"
+        self._base_url = base_url.rstrip("/")
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
             base_url=base_url,
@@ -108,7 +109,7 @@ class BangumiClient:
 
     async def _request_json(self, method: str, path: str, **kwargs: Any) -> object:
         try:
-            response = await self._client.request(method, path, **kwargs)
+            response = await self._client.request(method, f"{self._base_url}{path}", **kwargs)
         except httpx.TimeoutException as error:
             raise ProviderError(
                 ProviderErrorKind.TEMPORARY, "provider request timed out"
