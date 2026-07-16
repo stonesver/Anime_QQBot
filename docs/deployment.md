@@ -74,6 +74,46 @@ location = /qqbot {
 
 ## 更新
 
+### 从 ACR 镜像更新服务器
+
+服务器 `.env` 使用稳定本地标签：
+
+```dotenv
+IMAGE_TAG=latest
+```
+
+首次使用时，以运行部署脚本的同一用户登录 ACR。服务器通常使用 `sudo` 管理 Docker，因此执行：
+
+```bash
+sudo docker login \
+  crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com
+```
+
+以后每次 ACR 的 `latest` 构建成功后，只需运行：
+
+```bash
+sudo /opt/anime-qqbot/scripts/deploy-acr.sh
+```
+
+脚本可以从任意当前目录调用。它会自动定位 `/opt/anime-qqbot`，执行数据库备份、保存当前运行镜像、拉取 ACR `latest`、重建 `migrate`/`bot`/`worker`，并等待两个长期服务健康。新版本部署失败时，脚本会恢复上一版应用镜像；数据库不会自动恢复，以免覆盖部署期间的新数据。
+
+常用覆盖参数：
+
+```bash
+# 紧急情况下跳过部署前备份
+sudo SKIP_BACKUP=1 /opt/anime-qqbot/scripts/deploy-acr.sh
+
+# 将健康检查等待时间改为 180 秒
+sudo DEPLOY_TIMEOUT_SECONDS=180 /opt/anime-qqbot/scripts/deploy-acr.sh
+
+# 使用同一仓库的指定版本，而不是 latest
+sudo ACR_IMAGE_TAG=release-v1.2.0 /opt/anime-qqbot/scripts/deploy-acr.sh
+```
+
+正常部署返回退出码 `0`；新版本失败但应用回滚成功返回 `1`；新版本与回滚都失败返回 `2`。脚本不在内部执行 `sudo`，也不读取或输出 `.env` 中的秘密。
+
+### 从源码更新
+
 ```bash
 ./scripts/backup-postgres.sh
 git pull --ff-only
