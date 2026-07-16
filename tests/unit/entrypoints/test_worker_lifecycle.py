@@ -23,6 +23,10 @@ class RecordingPlanner:
         self.now = now
         return 0
 
+    async def plan_summaries(self, now: datetime) -> int:
+        self.summary_now = now
+        return 0
+
 
 async def test_worker_heartbeats_even_when_queue_is_empty() -> None:
     repository = EmptyRepository()
@@ -37,3 +41,4 @@ async def test_worker_heartbeats_even_when_queue_is_empty() -> None:
     assert await worker.run_once() is False
     assert repository.seen[0] == "worker-1"
     assert planner.now == datetime(2026, 7, 15, tzinfo=UTC)
+    assert planner.summary_now == datetime(2026, 7, 15, tzinfo=UTC)

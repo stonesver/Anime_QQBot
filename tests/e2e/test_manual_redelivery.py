@@ -57,6 +57,9 @@ async def test_admin_explicitly_redelivers_unknown_job_with_operator_audit() -> 
         original_id = original.id
     service = ScheduleAdminService(groups, schedules, PermissionPolicy())
 
+    status = await service.handle(event, CommandParser().parse("推送状态"), datetime.now(UTC))
+    assert f"#{original_id} unknown" in status.text
+
     result = await service.handle(
         event, CommandParser().parse(f"补发 {original_id}"), datetime.now(UTC)
     )

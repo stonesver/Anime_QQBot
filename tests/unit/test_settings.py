@@ -26,6 +26,7 @@ def test_settings_expose_safe_operational_defaults() -> None:
     assert settings.weekly_compensation_seconds == 86400
     assert settings.processed_event_retention_days == 7
     assert settings.delivery_retention_days == 90
+    assert settings.qq_event_transport == "webhook"
 
 
 def test_bot_credentials_are_required_only_when_bot_runtime_starts() -> None:

@@ -18,3 +18,6 @@ class EventProcessor:
             return False
         await self._handler.handle(event)
         return True
+
+    async def handle(self, event: QQEvent) -> None:
+        await self.process(event)

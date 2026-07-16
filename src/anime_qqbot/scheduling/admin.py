@@ -1,15 +1,21 @@
 # ruff: noqa: RUF001
 
-from datetime import datetime, time
-from typing import ClassVar
+from datetime import date, datetime, time
+from typing import ClassVar, Protocol
 from zoneinfo import ZoneInfo
 
+from anime_qqbot.catalog.models import CatalogListing
 from anime_qqbot.commands.models import CommandIntent, CommandKind
 from anime_qqbot.groups.permissions import PermissionPolicy
 from anime_qqbot.groups.repository import GroupRepository
 from anime_qqbot.qq.contracts import OutboundMessage, QQEvent
+from anime_qqbot.qq.rendering import render_listing
 from anime_qqbot.scheduling.module import ScheduleSpec, ScheduleType
 from anime_qqbot.scheduling.repository import ScheduleRepository
+
+
+class DailyCatalog(Protocol):
+    async def list_day(self, value: date) -> CatalogListing: ...
 
 
 class ScheduleAdminService:
@@ -29,10 +35,12 @@ class ScheduleAdminService:
         groups: GroupRepository,
         schedules: ScheduleRepository,
         permissions: PermissionPolicy,
+        catalog: DailyCatalog | None = None,
     ) -> None:
         self._groups = groups
         self._schedules = schedules
         self._permissions = permissions
+        self._catalog = catalog
 
     async def handle(self, event: QQEvent, intent: CommandIntent, now: datetime) -> OutboundMessage:
         if not self._permissions.can_manage_group(event):
@@ -76,23 +84,37 @@ class ScheduleAdminService:
             return OutboundMessage(f"时区已设置为 {intent.arguments[0]}。")
         if intent.kind is CommandKind.PUSH_STATUS:
             rows = await self._schedules.list_for_group(group.id)
-            if not rows:
-                return OutboundMessage(f"时区: {group.timezone}\n暂无推送计划。")
-            lines = [f"时区: {group.timezone}"] + [
+            problems = await self._schedules.list_recent_problems(group.id)
+            lines = [f"时区: {group.timezone}"]
+            lines.extend(
                 (
                     f"{row.schedule_type}: {'开启' if row.enabled else '关闭'}，"
                     f"下次 {row.next_run_at.isoformat()}"
                 )
                 for row in rows
-            ]
+            )
+            if not rows:
+                lines.append("暂无推送计划。")
+            if problems:
+                lines.append("最近异常任务：")
+                lines.extend(f"#{job.id} {job.status} {job.notification_type}" for job in problems)
             return OutboundMessage("\n".join(lines))
         if intent.kind is CommandKind.PUSH_TODAY_NOW:
+            if self._catalog is None:
+                return OutboundMessage("番剧目录尚未启用，无法创建手动推送。")
+            timezone = ZoneInfo(group.timezone)
+            today = now.astimezone(timezone).date()
+            message = render_listing(
+                f"{today.isoformat()} 番剧",
+                await self._catalog.list_day(today),
+                timezone,
+            )
             created = await self._schedules.create_job(
                 group.id,
                 "manual_daily",
                 event.event_id,
                 now,
-                {"group_openid": event.group_openid, "text": "管理员手动触发今日番剧推送。"},
+                {"group_openid": event.group_openid, "text": message.text},
             )
             return OutboundMessage("已创建手动推送任务。" if created else "该手动任务已存在。")
         if intent.kind is CommandKind.REDELIVER:

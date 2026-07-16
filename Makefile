@@ -3,7 +3,7 @@ UV_CACHE_DIR ?= .uv-cache
 TEST_DATABASE_URL ?= postgresql+asyncpg://anime:anime@127.0.0.1:55432/anime_test
 RUN = UV_CACHE_DIR=$(UV_CACHE_DIR) $(UV) run
 
-.PHONY: format lint typecheck test-unit test-integration check-fast check postgres-up postgres-down
+.PHONY: format lint typecheck test-unit test-integration check-fast check postgres-up postgres-down docker-build
 
 format:
 	$(RUN) ruff format .
@@ -34,3 +34,7 @@ check-fast: lint typecheck test-unit
 check: check-fast test-integration
 	TEST_DATABASE_URL=$(TEST_DATABASE_URL) $(RUN) pytest
 	docker compose -f compose.test.yaml config --quiet
+
+docker-build:
+	docker build -t anime-qqbot:dev .
+	POSTGRES_PASSWORD=compose-config-only docker compose config --quiet
