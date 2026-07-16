@@ -29,3 +29,5 @@ class CommandIntent:
     arguments: tuple[str, ...] = ()
     valid: bool = True
     error: str | None = None
+    page: int = 1
+    force_compact: bool = False

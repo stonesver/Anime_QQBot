@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from datetime import date
 from typing import ClassVar
 
@@ -33,6 +34,11 @@ class CommandParser:
 
     def parse(self, content: str) -> CommandIntent:
         normalized = re.sub(r"\s+", " ", content.strip())
+        normalized, page, force_compact = self._presentation_options(normalized)
+        intent = self._parse_normalized(normalized)
+        return replace(intent, page=page, force_compact=force_compact)
+
+    def _parse_normalized(self, normalized: str) -> CommandIntent:
         if normalized in self._simple:
             return CommandIntent(self._simple[normalized])
         for prefix, kind in self._with_argument:
@@ -46,6 +52,26 @@ class CommandParser:
                 arguments = tuple(normalized[len(prefix) + 1 :].split(" "))
                 return self._validate(kind, arguments)
         return CommandIntent(CommandKind.HELP, error="未识别命令")
+
+    @staticmethod
+    def _presentation_options(content: str) -> tuple[str, int, bool]:
+        tokens = content.split(" ") if content else []
+        page = 1
+        force_compact = False
+        while tokens:
+            option = tokens[-1]
+            if option.startswith("--page="):
+                value = option.removeprefix("--page=")
+                if value.isdigit() and int(value) > 0:
+                    page = int(value)
+                    tokens.pop()
+                    continue
+            if option == "--view=compact":
+                force_compact = True
+                tokens.pop()
+                continue
+            break
+        return " ".join(tokens), page, force_compact
 
     def _validate(self, kind: CommandKind, arguments: tuple[str, ...]) -> CommandIntent:
         if kind is CommandKind.TODAY:

@@ -27,6 +27,8 @@ EVENT_TYPES = {
     "GROUP_MSG_REJECT": QQEventType.ACTIVE_MESSAGES_DISABLED,
 }
 
+FORMAT_REJECTION_CODES = {"304082", "304083"}
+
 
 def map_dispatch(payload: Mapping[str, object]) -> QQEvent | None:
     event_type = EVENT_TYPES.get(str(payload.get("t")))
@@ -36,8 +38,12 @@ def map_dispatch(payload: Mapping[str, object]) -> QQEvent | None:
     author_raw = data.get("author")
     author: Mapping[str, object] = author_raw if isinstance(author_raw, Mapping) else {}
     group_openid = _text(data.get("group_openid"))
-    member_openid = _text(author.get("member_openid")) or _text(data.get("op_member_openid"))
-    user_openid = _text(author.get("user_openid"))
+    member_openid = (
+        _text(author.get("member_openid"))
+        or _text(data.get("op_member_openid"))
+        or _text(data.get("group_member_openid"))
+    )
+    user_openid = _text(author.get("user_openid")) or _text(data.get("user_openid"))
     timestamp = _timestamp(data.get("timestamp") or data.get("event_ts"))
     role = _role(data.get("member_role") or author.get("member_role"))
     button_data = None
@@ -118,6 +124,14 @@ class OfficialQQGateway:
             },
         }
 
+    async def acknowledge_interaction(self, event: QQEvent) -> DeliveryResult:
+        if event.event_type is not QQEventType.BUTTON_INTERACTION:
+            return DeliveryResult(
+                DeliveryOutcome.PERMANENT_FAILURE,
+                error_code="not_an_interaction",
+            )
+        return await self._send(f"/interactions/{event.event_id}", {"code": 0}, method="PUT")
+
     async def reply(self, event: QQEvent, message: OutboundMessage) -> DeliveryResult:
         if event.group_openid:
             path = f"/v2/groups/{event.group_openid}/messages"
@@ -125,21 +139,54 @@ class OfficialQQGateway:
             path = f"/v2/users/{event.user_openid}/messages"
         else:
             return DeliveryResult(DeliveryOutcome.PERMANENT_FAILURE, error_code="missing_target")
-        payload = self._message_payload(message)
+        reference: dict[str, object] = {}
         if event.message_id:
-            payload["msg_id"] = event.message_id
+            reference["msg_id"] = event.message_id
         else:
-            payload["event_id"] = event.event_id
-        return await self._send(path, payload)
+            reference["event_id"] = event.event_id
+        return await self._deliver(path, message, reference)
 
     async def send_group(self, group_openid: str, message: OutboundMessage) -> DeliveryResult:
-        return await self._send(
-            f"/v2/groups/{group_openid}/messages", self._message_payload(message)
-        )
+        return await self._deliver(f"/v2/groups/{group_openid}/messages", message)
 
-    async def _send(self, path: str, payload: dict[str, object]) -> DeliveryResult:
+    async def _deliver(
+        self,
+        path: str,
+        message: OutboundMessage,
+        reference: Mapping[str, object] | None = None,
+    ) -> DeliveryResult:
+        candidates = [message]
+        if message.fallback_markdown and message.fallback_markdown != message.markdown:
+            candidates.append(
+                OutboundMessage(
+                    message.text,
+                    markdown=message.fallback_markdown,
+                    buttons=message.buttons,
+                    mentions=message.mentions,
+                )
+            )
+        if message.markdown:
+            candidates.append(OutboundMessage(message.text, mentions=message.mentions))
+
+        result = DeliveryResult(DeliveryOutcome.UNKNOWN)
+        for sequence, candidate in enumerate(candidates, 1):
+            payload = self._message_payload(candidate)
+            payload.update(reference or {})
+            if sequence > 1 and reference and "msg_id" in reference:
+                payload["msg_seq"] = sequence
+            result = await self._send(path, payload)
+            if not (
+                result.outcome is DeliveryOutcome.PERMANENT_FAILURE
+                and result.error_code in FORMAT_REJECTION_CODES
+            ):
+                return result
+        return result
+
+    async def _send(
+        self, path: str, payload: dict[str, object], *, method: str = "POST"
+    ) -> DeliveryResult:
         try:
-            response = await self._authorized_request("POST", path, json=payload)
+            response = await self._authorized_request(method, path, json=payload)
         except httpx.TimeoutException:
             return DeliveryResult(DeliveryOutcome.UNKNOWN, error_code="timeout")
         body = response.json() if response.content else {}
@@ -190,19 +237,29 @@ class OfficialQQGateway:
             payload.update(
                 {"content": "", "msg_type": 2, "markdown": {"content": message.markdown}}
             )
-        if message.buttons:
+        if message.buttons and message.markdown:
+            rendered_buttons = [
+                {
+                    "id": str(index),
+                    "render_data": {
+                        "label": button.label,
+                        "visited_label": button.label,
+                        "style": 1,
+                    },
+                    "action": {
+                        "type": 1,
+                        "permission": {"type": 2},
+                        "data": button.data,
+                        "unsupport_tips": "请发送对应命令",
+                    },
+                }
+                for index, button in enumerate(message.buttons, 1)
+            ]
             payload["keyboard"] = {
                 "content": {
                     "rows": [
-                        {
-                            "buttons": [
-                                {
-                                    "render_data": {"label": button.label, "style": 1},
-                                    "action": {"type": 2, "data": button.data},
-                                }
-                                for button in message.buttons
-                            ]
-                        }
+                        {"buttons": rendered_buttons[index : index + 5]}
+                        for index in range(0, len(rendered_buttons), 5)
                     ]
                 }
             }

@@ -11,6 +11,7 @@ from anime_qqbot.qq.contracts import (
 class FakeQQGateway:
     def __init__(self, events: list[QQEvent] | None = None) -> None:
         self.pending_events = list(events or [])
+        self.acknowledged_interactions: list[str] = []
         self.replies: list[tuple[QQEvent, OutboundMessage]] = []
         self.group_messages: list[tuple[str, OutboundMessage]] = []
         self.next_result = DeliveryResult(DeliveryOutcome.SENT, "fake-message")
@@ -18,6 +19,10 @@ class FakeQQGateway:
     async def events(self) -> AsyncIterator[QQEvent]:
         for event in self.pending_events:
             yield event
+
+    async def acknowledge_interaction(self, event: QQEvent) -> DeliveryResult:
+        self.acknowledged_interactions.append(event.event_id)
+        return self.next_result
 
     async def reply(self, event: QQEvent, message: OutboundMessage) -> DeliveryResult:
         self.replies.append((event, message))
