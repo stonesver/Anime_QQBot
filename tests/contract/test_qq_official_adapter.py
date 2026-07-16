@@ -48,3 +48,10 @@ async def test_auth_is_cached_and_group_message_uses_qqbot_header() -> None:
     assert auth.call_count == 1
     assert send.calls[0].request.headers["authorization"] == "QQBot secret-token"
     assert "secret" not in str(send.calls[0].request.content)
+
+
+def test_group_mentions_use_official_inline_format() -> None:
+    payload = OfficialQQGateway._message_payload(
+        OutboundMessage("预计放送", mentions=("member-a", "member-b"))
+    )
+    assert payload["content"] == "<@member-a> <@member-b>\n预计放送"

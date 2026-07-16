@@ -183,7 +183,9 @@ class OfficialQQGateway:
 
     @staticmethod
     def _message_payload(message: OutboundMessage) -> dict[str, object]:
-        payload: dict[str, object] = {"content": message.text, "msg_type": 0}
+        mentions = " ".join(f"<@{member_openid}>" for member_openid in message.mentions)
+        content = f"{mentions}\n{message.text}" if mentions else message.text
+        payload: dict[str, object] = {"content": content, "msg_type": 0}
         if message.markdown:
             payload.update(
                 {"content": "", "msg_type": 2, "markdown": {"content": message.markdown}}

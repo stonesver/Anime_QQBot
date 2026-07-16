@@ -29,6 +29,7 @@ from anime_qqbot.notifications.planner import NotificationPlanner
 from anime_qqbot.persistence.session import create_engine, create_session_factory
 from anime_qqbot.qq.auth import QQAccessTokenProvider
 from anime_qqbot.qq.official import OfficialQQGateway
+from anime_qqbot.qq.webhook import create_qq_webhook_app
 from anime_qqbot.scheduling.admin import ScheduleAdminService
 from anime_qqbot.scheduling.repository import ScheduleRepository
 from anime_qqbot.scheduling.worker import Worker
@@ -71,12 +72,23 @@ async def run_bot() -> None:
             admin,
         )
         processor = EventProcessor(GroupManager(groups), handler)
-        runtime = BotRuntime(gateway, processor)
-        health = asyncio.create_task(_serve_health(8080, runtime))
-        try:
-            await runtime.run()
-        finally:
-            health.cancel()
+        if settings.qq_event_transport == "webhook":
+            server = uvicorn.Server(
+                uvicorn.Config(
+                    create_qq_webhook_app(secret, processor),
+                    host="0.0.0.0",
+                    port=8080,
+                    log_level="warning",
+                )
+            )
+            await server.serve()
+        else:
+            runtime = BotRuntime(gateway, processor)
+            health = asyncio.create_task(_serve_health(8080, runtime))
+            try:
+                await runtime.run()
+            finally:
+                health.cancel()
     await engine.dispose()
 
 

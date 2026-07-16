@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     bangumi_access_token: SecretStr | None = None
     qq_app_id: str | None = None
     qq_app_secret: SecretStr | None = None
+    qq_event_transport: Literal["webhook", "websocket"] = "webhook"
     bootstrap_admin_identities: tuple[AdminIdentity, ...] = ()
     default_timezone: str = "Asia/Shanghai"
     log_level: str = "INFO"
