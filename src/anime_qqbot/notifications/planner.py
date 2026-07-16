@@ -27,8 +27,16 @@ class _SummaryRow:
 
 
 class NotificationPlanner:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        daily_compensation: timedelta = timedelta(hours=2),
+        weekly_compensation: timedelta = timedelta(days=1),
+    ) -> None:
         self._sessions = sessions
+        self._daily_compensation = daily_compensation
+        self._weekly_compensation = weekly_compensation
 
     async def plan_airing(
         self,
@@ -139,6 +147,14 @@ class NotificationPlanner:
             for schedule, group in due:
                 timezone = ZoneInfo(schedule.timezone)
                 occurrence_at = schedule.next_run_at
+                compensation = (
+                    self._daily_compensation
+                    if schedule.schedule_type == ScheduleType.DAILY.value
+                    else self._weekly_compensation
+                )
+                if now - occurrence_at > compensation:
+                    self._advance_schedule(schedule, now)
+                    continue
                 local_date = occurrence_at.astimezone(timezone).date()
                 starts_on, ends_on = self._summary_range(schedule.schedule_type, local_date)
                 rows = (
@@ -203,14 +219,18 @@ class NotificationPlanner:
                     )
                     if (await session.execute(statement)).scalar_one_or_none() is not None:
                         created += 1
-                spec = ScheduleSpec(
-                    ScheduleType(schedule.schedule_type),
-                    schedule.timezone,
-                    schedule.local_time,
-                    schedule.weekday,
-                )
-                schedule.next_run_at = next_run(spec, now)
+                self._advance_schedule(schedule, now)
             return created
+
+    @staticmethod
+    def _advance_schedule(schedule: GroupSchedule, now: datetime) -> None:
+        spec = ScheduleSpec(
+            ScheduleType(schedule.schedule_type),
+            schedule.timezone,
+            schedule.local_time,
+            schedule.weekday,
+        )
+        schedule.next_run_at = next_run(spec, now)
 
     @staticmethod
     def _summary_range(schedule_type: str, value: date) -> tuple[date, date]:

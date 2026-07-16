@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import os
 from datetime import datetime, timedelta
 
 import httpx
@@ -24,6 +25,7 @@ from anime_qqbot.entrypoints.health import create_health_app
 from anime_qqbot.groups.module import GroupManager
 from anime_qqbot.groups.permissions import PermissionPolicy
 from anime_qqbot.groups.repository import GroupRepository
+from anime_qqbot.logging import configure_logging
 from anime_qqbot.notifications.delivery import DeliveryRepository, NotificationDelivery
 from anime_qqbot.notifications.planner import NotificationPlanner
 from anime_qqbot.persistence.session import create_engine, create_session_factory
@@ -60,7 +62,10 @@ async def run_bot() -> None:
             (item.group_openid, item.member_openid) for item in settings.bootstrap_admin_identities
         }
         admin = ScheduleAdminService(
-            groups, ScheduleRepository(sessions), PermissionPolicy(bootstrap)
+            groups,
+            ScheduleRepository(sessions),
+            PermissionPolicy(bootstrap),
+            catalog,
         )
         handler = CommandHandler(
             CommandRouter(CommandParser(), DisabledAgentRuntime()),
@@ -97,12 +102,19 @@ class WorkerPlanner:
         self,
         sync: CatalogSyncService,
         planner: NotificationPlanner,
+        schedules: ScheduleRepository,
         sync_seconds: int,
+        event_retention_days: int,
+        delivery_retention_days: int,
     ) -> None:
         self._sync = sync
         self._planner = planner
+        self._schedules = schedules
         self._sync_interval = timedelta(seconds=sync_seconds)
+        self._event_retention_days = event_retention_days
+        self._delivery_retention_days = delivery_retention_days
         self._next_sync: datetime | None = None
+        self._next_cleanup: datetime | None = None
 
     async def plan_airing(self, now: datetime) -> int:
         if self._next_sync is None or now >= self._next_sync:
@@ -111,7 +123,15 @@ class WorkerPlanner:
         return await self._planner.plan_airing(now)
 
     async def plan_summaries(self, now: datetime) -> int:
-        return await self._planner.plan_summaries(now)
+        created = await self._planner.plan_summaries(now)
+        if self._next_cleanup is None or now >= self._next_cleanup:
+            await self._schedules.cleanup(
+                now,
+                self._event_retention_days,
+                self._delivery_retention_days,
+            )
+            self._next_cleanup = now + timedelta(days=1)
+        return created
 
 
 async def run_worker() -> None:
@@ -138,14 +158,22 @@ async def run_worker() -> None:
             repository,
             clock,
         )
+        schedules = ScheduleRepository(sessions)
         planner = WorkerPlanner(
             sync,
-            NotificationPlanner(sessions),
+            NotificationPlanner(
+                sessions,
+                daily_compensation=timedelta(seconds=settings.daily_compensation_seconds),
+                weekly_compensation=timedelta(seconds=settings.weekly_compensation_seconds),
+            ),
+            schedules,
             settings.bangumi_data_sync_seconds,
+            settings.processed_event_retention_days,
+            settings.delivery_retention_days,
         )
         worker = Worker(
             "worker-1",
-            ScheduleRepository(sessions),
+            schedules,
             NotificationDelivery(DeliveryRepository(sessions), gateway, clock),
             clock,
             settings.worker_scan_seconds,
@@ -164,6 +192,7 @@ def migrate() -> None:
 
 
 def main() -> None:
+    configure_logging(os.environ.get("LOG_LEVEL", "INFO"))
     parser = argparse.ArgumentParser()
     parser.add_argument("role", choices=("migrate", "bot", "worker"))
     role = parser.parse_args().role

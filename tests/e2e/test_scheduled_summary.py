@@ -81,7 +81,10 @@ async def test_due_daily_schedule_creates_real_listing_and_advances_once() -> No
 
     async with sessions() as session:
         job = await session.scalar(
-            select(NotificationJob).where(NotificationJob.business_key.like("summary:daily:%"))
+            select(NotificationJob).where(
+                NotificationJob.group_id == group_id,
+                NotificationJob.business_key.like("summary:daily:%"),
+            )
         )
         schedule = await session.scalar(
             select(GroupSchedule).where(GroupSchedule.group_id == group_id)
@@ -92,4 +95,41 @@ async def test_due_daily_schedule_creates_real_listing_and_advances_once() -> No
     assert "每日推送测试番" in job.payload["text"]
     assert schedule is not None
     assert schedule.next_run_at == datetime(2026, 7, 16, 1, tzinfo=UTC)
+    await engine.dispose()
+
+
+async def test_stale_daily_schedule_is_advanced_without_sending_old_summary() -> None:
+    engine = create_async_engine(os.environ["TEST_DATABASE_URL"])
+    sessions = create_session_factory(engine)
+    suffix = str(uuid4())
+    groups = GroupRepository(sessions)
+    group_id = await groups.observe(
+        QQEvent(
+            f"stale-event-{suffix}",
+            QQEventType.GROUP_AT_MESSAGE,
+            datetime(2026, 7, 10, tzinfo=UTC),
+            group_openid=f"stale-summary-group-{suffix}",
+            member_openid="admin",
+        )
+    )
+    assert group_id is not None
+    async with sessions() as session, session.begin():
+        await session.execute(
+            update(Group).where(Group.id == group_id).values(active_messages_enabled=True)
+        )
+    schedules = ScheduleRepository(sessions)
+    await schedules.configure(
+        group_id,
+        ScheduleSpec(ScheduleType.DAILY, "Asia/Shanghai", time(9)),
+        datetime(2026, 7, 9, tzinfo=UTC),
+    )
+
+    now = datetime(2026, 7, 15, 1, tzinfo=UTC)
+    assert await NotificationPlanner(sessions).plan_summaries(now) == 0
+
+    async with sessions() as session:
+        schedule = await session.scalar(
+            select(GroupSchedule).where(GroupSchedule.group_id == group_id)
+        )
+    assert schedule is not None and schedule.next_run_at > now
     await engine.dispose()

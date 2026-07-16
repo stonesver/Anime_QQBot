@@ -79,6 +79,19 @@ class ScheduleRepository:
             )
             return list(rows)
 
+    async def list_recent_problems(self, group_id: int, limit: int = 5) -> list[NotificationJob]:
+        async with self._sessions() as session:
+            rows = await session.scalars(
+                select(NotificationJob)
+                .where(
+                    NotificationJob.group_id == group_id,
+                    NotificationJob.status.in_({"failed", "unknown"}),
+                )
+                .order_by(NotificationJob.created_at.desc())
+                .limit(limit)
+            )
+            return list(rows)
+
     async def redeliver_unknown(
         self,
         job_id: int,
