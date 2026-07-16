@@ -18,6 +18,8 @@ def make_settings(**overrides: object) -> Settings:
 def test_settings_expose_safe_operational_defaults() -> None:
     settings = make_settings()
 
+    assert settings.bangumi_api_base_url == "https://api.bgm.tv"
+    assert settings.bangumi_api_fallback_urls == ()
     assert settings.default_timezone == "Asia/Shanghai"
     assert settings.catalog_cache_ttl_seconds == 3600
     assert settings.bangumi_data_sync_seconds == 21600
@@ -53,6 +55,41 @@ def test_invalid_admin_identity_is_rejected() -> None:
         make_settings(bootstrap_admin_identities="not-a-pair")
 
 
+def test_bangumi_api_urls_are_normalized_and_deduplicated() -> None:
+    settings = make_settings(
+        bangumi_api_base_url=" https://api.bgm.tv/ ",
+        bangumi_api_fallback_urls=(
+            "https://api.bgm.tv",
+            " https://mirror-one.example/ ",
+            "https://mirror-one.example",
+            "https://mirror-two.example/",
+        ),
+    )
+
+    assert settings.bangumi_api_base_url == "https://api.bgm.tv"
+    assert settings.bangumi_api_fallback_urls == (
+        "https://mirror-one.example",
+        "https://mirror-two.example",
+    )
+
+
+def test_bangumi_api_fallback_urls_parse_comma_separated_environment_value() -> None:
+    settings = make_settings(
+        bangumi_api_fallback_urls="https://mirror-one.example, , https://mirror-two.example/"
+    )
+
+    assert settings.bangumi_api_fallback_urls == (
+        "https://mirror-one.example",
+        "https://mirror-two.example",
+    )
+
+
+@pytest.mark.parametrize("url", ["api.bgm.tv", "ftp://api.bgm.tv", "https:///calendar"])
+def test_invalid_bangumi_api_url_is_rejected(url: str) -> None:
+    with pytest.raises(ValidationError, match="must use http or https"):
+        make_settings(bangumi_api_base_url=url)
+
+
 def test_env_file_path_is_not_part_of_settings_state(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
@@ -64,3 +101,20 @@ def test_env_file_path_is_not_part_of_settings_state(tmp_path: Path) -> None:
     settings = Settings(_env_file=env_file)
 
     assert settings.database_url.endswith("/anime")
+
+
+def test_env_file_parses_comma_separated_bangumi_fallback_urls(tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DATABASE_URL=postgresql+asyncpg://anime:anime@localhost/anime\n"
+        "BANGUMI_USER_AGENT=anime-qqbot/test@example.com\n"
+        "BANGUMI_API_FALLBACK_URLS=https://one.example,https://two.example/\n",
+        encoding="utf-8",
+    )
+
+    settings = Settings(_env_file=env_file)
+
+    assert settings.bangumi_api_fallback_urls == (
+        "https://one.example",
+        "https://two.example",
+    )

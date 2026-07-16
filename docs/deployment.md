@@ -6,7 +6,7 @@
 - Docker Engine 25+ 与 Docker Compose v2.24+；
 - 能为回调域名提供 HTTPS 的反向代理，例如 Nginx 或 Caddy；
 - QQ 开放平台机器人 `AppID`、`AppSecret`，以及已经配置好的测试群或正式环境；
-- 可出站访问 QQ 开放平台、Bangumi API、GitHub Raw；
+- 可出站访问 QQ 开放平台、至少一个已配置的 Bangumi API 地址、GitHub Raw；
 - 服务器时间同步正常，建议使用 UTC，群时区由机器人配置单独管理。
 
 QQ 平台能力和审核规则可能变化，账号侧配置以 [QQ 开放平台](https://q.qq.com/) 当前控制台为准。腾讯官方 [botgo](https://github.com/tencent-connect/botgo) 已将 Webhook 作为当前事件接入方向，本项目因此默认 `QQ_EVENT_TRANSPORT=webhook`；旧账号确有兼容需要时才使用 `websocket`。Bangumi 接口说明见 [Bangumi API](https://github.com/bangumi/api)，节目表补充数据来自 [bangumi-data](https://github.com/bangumi-data/bangumi-data)。
@@ -25,12 +25,17 @@ chmod 600 .env
 ```dotenv
 POSTGRES_PASSWORD=<仅含 URL 安全字符的长随机密码>
 BANGUMI_USER_AGENT=anime-qqbot/0.1.0 (your-email@example.com)
+BANGUMI_API_BASE_URL=https://api.bgm.tv
+BANGUMI_API_FALLBACK_URLS=
 QQ_APP_ID=<QQ 机器人 AppID>
 QQ_APP_SECRET=<QQ 机器人 AppSecret>
 QQ_EVENT_TRANSPORT=webhook
 ```
 
-`BANGUMI_ACCESS_TOKEN` 是可选项。`BOOTSTRAP_ADMIN_IDENTITIES` 仅用于平台事件无法提供管理员身份时的引导配置，格式是 `group_openid:member_openid`，多项用逗号分隔。
+`BANGUMI_ACCESS_TOKEN` 是可选项。若服务器无法稳定访问官方 API，可在
+`BANGUMI_API_FALLBACK_URLS` 中按优先级填写逗号分隔的兼容镜像地址。客户端会在连接失败、超时、HTTP `429`、HTTP `5xx` 或无效 JSON 时自动切换，并将失败地址冷却 5 分钟；其他 HTTP `4xx` 不会触发切换。访问令牌只发送给 `BANGUMI_API_BASE_URL`，不会发送给第三方备用地址。第三方镜像由部署者自行选择并承担其可用性与数据可信风险。
+
+`BOOTSTRAP_ADMIN_IDENTITIES` 仅用于平台事件无法提供管理员身份时的引导配置，格式是 `group_openid:member_openid`，多项用逗号分隔。
 
 验证并启动：
 
