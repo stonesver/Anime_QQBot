@@ -152,6 +152,9 @@ async def run_worker() -> None:
                     if settings.bangumi_access_token
                     else None
                 ),
+                base_url=settings.bangumi_api_base_url,
+                fallback_urls=settings.bangumi_api_fallback_urls,
+                clock=clock,
                 client=client,
             ),
             BangumiDataClient(client=client),

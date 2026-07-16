@@ -1,5 +1,6 @@
-from collections.abc import Mapping
-from datetime import date
+import logging
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime, timedelta
 from typing import Any, NoReturn, cast
 
 import httpx
@@ -10,29 +11,34 @@ from anime_qqbot.catalog.adapters.http_policy import (
     raise_for_provider_response,
 )
 from anime_qqbot.catalog.models import AiringOccurrence, AnimeDetail, AnimeSummary
+from anime_qqbot.clock import Clock, SystemClock
+
+logger = logging.getLogger(__name__)
 
 
 class BangumiClient:
+    _FAILURE_COOLDOWN = timedelta(minutes=5)
+
     def __init__(
         self,
         user_agent: str,
         *,
         access_token: str | None = None,
         base_url: str = "https://api.bgm.tv",
+        fallback_urls: Sequence[str] = (),
+        clock: Clock | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        headers = {"User-Agent": user_agent, "Accept": "application/json"}
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
+        self._headers = {"User-Agent": user_agent, "Accept": "application/json"}
+        self._access_token = access_token
         self._base_url = base_url.rstrip("/")
+        self._base_urls = (self._base_url, *(url.rstrip("/") for url in fallback_urls))
+        self._clock = clock or SystemClock()
+        self._cooldown_until: dict[str, datetime] = {}
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(
-            base_url=base_url,
-            headers=headers,
             timeout=httpx.Timeout(10, connect=3),
         )
-        if client is not None:
-            self._client.headers.update(headers)
 
     async def __aenter__(self) -> "BangumiClient":
         return self
@@ -108,19 +114,68 @@ class BangumiClient:
         return result
 
     async def _request_json(self, method: str, path: str, **kwargs: Any) -> object:
-        try:
-            response = await self._client.request(method, f"{self._base_url}{path}", **kwargs)
-        except httpx.TimeoutException as error:
-            raise ProviderError(
-                ProviderErrorKind.TEMPORARY, "provider request timed out"
-            ) from error
-        raise_for_provider_response(response)
-        try:
-            return response.json()
-        except ValueError as error:
-            raise ProviderError(
-                ProviderErrorKind.INVALID_RESPONSE, "provider returned invalid JSON"
-            ) from error
+        last_error: ProviderError | None = None
+        candidates = self._available_base_urls(self._clock.now())
+        for index, base_url in enumerate(candidates):
+            headers = dict(self._headers)
+            if base_url == self._base_url and self._access_token:
+                headers["Authorization"] = f"Bearer {self._access_token}"
+            try:
+                response = await self._client.request(
+                    method, f"{base_url}{path}", headers=headers, **kwargs
+                )
+                raise_for_provider_response(response)
+                try:
+                    payload = response.json()
+                except ValueError as error:
+                    raise ProviderError(
+                        ProviderErrorKind.INVALID_RESPONSE, "provider returned invalid JSON"
+                    ) from error
+                self._cooldown_until.pop(base_url, None)
+                return payload
+            except httpx.TransportError:
+                last_error = ProviderError(ProviderErrorKind.TEMPORARY, "provider request failed")
+                self._cooldown(base_url)
+                self._log_endpoint_failure(base_url, last_error, candidates, index)
+                continue
+            except ProviderError as error:
+                if error.kind is ProviderErrorKind.PERMANENT:
+                    raise
+                last_error = error
+                self._cooldown(base_url)
+                self._log_endpoint_failure(base_url, error, candidates, index)
+                continue
+        assert last_error is not None
+        raise last_error
+
+    def _available_base_urls(self, now: datetime) -> tuple[str, ...]:
+        available = tuple(
+            base_url
+            for base_url in self._base_urls
+            if self._cooldown_until.get(base_url, now) <= now
+        )
+        if available:
+            return available
+        return (min(self._base_urls, key=self._cooldown_until.__getitem__),)
+
+    def _cooldown(self, base_url: str) -> None:
+        self._cooldown_until[base_url] = self._clock.now() + self._FAILURE_COOLDOWN
+
+    @staticmethod
+    def _log_endpoint_failure(
+        base_url: str,
+        error: ProviderError,
+        candidates: tuple[str, ...],
+        index: int,
+    ) -> None:
+        logger.warning(
+            {
+                "event": "bangumi_endpoint_failed",
+                "endpoint": base_url,
+                "error_kind": error.kind,
+                "next_endpoint": candidates[index + 1] if index + 1 < len(candidates) else None,
+            }
+        )
 
     @classmethod
     def _summary(cls, payload: Mapping[str, object]) -> AnimeSummary:
