@@ -29,7 +29,8 @@ class CoverTooLargeError(CoverProxyError):
 
 
 class QQCoverProxy:
-    _ALLOWED_HOSTS = frozenset({"lain.bgm.tv"})
+    _ALLOWED_HOSTS = frozenset({"bgmimg.anibt.net", "lain.bgm.tv"})
+    _LEGACY_HTTP_HOSTS = frozenset({"bgmimg.anibt.net"})
     _ALLOWED_MEDIA_TYPES = frozenset({"image/jpeg", "image/png"})
 
     def __init__(
@@ -53,17 +54,18 @@ class QQCoverProxy:
         except ValueError:
             self._log_rejection(subject_id, "untrusted_upstream")
             raise CoverProxyError("untrusted upstream") from None
-        if (
-            parsed.scheme != "https"
-            or parsed.hostname not in self._ALLOWED_HOSTS
-            or port not in {None, 443}
-        ):
+        hostname = parsed.hostname
+        trusted_scheme = parsed.scheme == "https" or (
+            parsed.scheme == "http" and hostname in self._LEGACY_HTTP_HOSTS
+        )
+        if not trusted_scheme or hostname not in self._ALLOWED_HOSTS or port not in {None, 443}:
             self._log_rejection(subject_id, "untrusted_upstream")
             raise CoverProxyError("untrusted upstream")
+        upstream_url = parsed._replace(scheme="https").geturl()
         try:
             async with self._client.stream(
                 "GET",
-                detail.image_url,
+                upstream_url,
                 follow_redirects=False,
                 timeout=10,
             ) as response:
