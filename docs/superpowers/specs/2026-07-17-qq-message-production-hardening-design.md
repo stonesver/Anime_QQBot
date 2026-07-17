@@ -38,13 +38,16 @@ Bot HTTP 服务新增只读路由：
 GET /qqbot/media/covers/{subject_id}
 ```
 
-路由按 `subject_id` 从现有目录查询番剧详情，只使用数据库中已有的 `image_url`。上游 URL 必须满足：
+路由按 `subject_id` 从现有目录查询番剧详情，只使用数据库中已有的 `image_url`。Bangumi 官方 API 与已配置的兼容镜像可能返回不同的封面主机，因此上游 URL 必须满足：
 
-- HTTPS；
-- 主机名为 `lain.bgm.tv`；
+- 主机名为 `lain.bgm.tv` 或 `bgmimg.anibt.net`；
+- `lain.bgm.tv` 必须使用 HTTPS；镜像历史数据允许使用 HTTP，但代理请求时必须强制升级为 HTTPS；
+- 只允许默认端口或 HTTPS 端口 443；
 - 响应类型为 `image/jpeg` 或 `image/png`；
 - 响应正文不超过 5 MiB；
-- 不跟随跳转到非白名单主机。
+- 不跟随上游跳转。
+
+代理不将镜像封面改写到 `lain.bgm.tv`。部分生产网络无法访问 Bangumi 官方 API 与图片 CDN，但可以访问已配置的兼容镜像；保留原始白名单主机并仅升级协议可避免引入新的官方 CDN 可达性依赖，同时仍将 SSRF 范围限制在两个固定图片主机。
 
 成功响应透传图片二进制与媒体类型，并设置公共缓存响应头。不存在的番剧或封面返回 404；非法来源或上游失败返回 502；超出大小返回 413。响应不暴露上游 URL 或内部异常详情。
 
