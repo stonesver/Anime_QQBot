@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -7,7 +8,13 @@ from anime_qqbot.catalog.module import AnimeCatalog
 from anime_qqbot.clock import Clock
 from anime_qqbot.commands.models import CommandIntent, CommandKind
 from anime_qqbot.commands.router import CommandRouter
-from anime_qqbot.qq.contracts import OutboundMessage, QQEvent, QQEventType
+from anime_qqbot.qq.contracts import (
+    DeliveryOutcome,
+    DeliveryResult,
+    OutboundMessage,
+    QQEvent,
+    QQEventType,
+)
 from anime_qqbot.qq.gateway import QQGateway
 from anime_qqbot.qq.rendering import (
     render_detail,
@@ -19,6 +26,8 @@ from anime_qqbot.qq.rendering import (
     render_subscription_status,
 )
 from anime_qqbot.subscriptions.module import SubscriptionManager
+
+logger = logging.getLogger(__name__)
 
 
 class ScheduleAdmin(Protocol):
@@ -37,6 +46,7 @@ class CommandHandler:
         clock: Clock,
         timezone: str = "Asia/Shanghai",
         schedule_admin: ScheduleAdmin | None = None,
+        image_proxy_base_url: str | None = None,
     ) -> None:
         self._router = router
         self._catalog = catalog
@@ -45,10 +55,12 @@ class CommandHandler:
         self._clock = clock
         self._timezone = ZoneInfo(timezone)
         self._schedule_admin = schedule_admin
+        self._image_proxy_base_url = image_proxy_base_url
 
     async def handle(self, event: QQEvent) -> None:
         if event.event_type is QQEventType.BUTTON_INTERACTION:
-            await self._gateway.acknowledge_interaction(event)
+            acknowledgement = await self._gateway.acknowledge_interaction(event)
+            self._log_failed_delivery("acknowledge_interaction", acknowledgement)
         intent = await self._router.route(event)
         if intent is None:
             return
@@ -56,7 +68,8 @@ class CommandHandler:
             await self._reply(event, intent.error or "参数错误")
             return
         message = await self._execute(event, intent)
-        await self._gateway.reply(event, message)
+        result = await self._gateway.reply(event, message)
+        self._log_failed_delivery("reply", result)
 
     async def _execute(self, event: QQEvent, intent: CommandIntent) -> OutboundMessage:
         admin_kinds = {
@@ -83,6 +96,7 @@ class CommandHandler:
                 command=f"今日番剧 {value.isoformat()}",
                 page=intent.page,
                 force_compact=intent.force_compact,
+                image_proxy_base_url=self._image_proxy_base_url,
             )
         if intent.kind is CommandKind.WEEK:
             return render_listing(
@@ -92,6 +106,7 @@ class CommandHandler:
                 command="本周番剧",
                 page=intent.page,
                 force_compact=intent.force_compact,
+                image_proxy_base_url=self._image_proxy_base_url,
             )
         if intent.kind is CommandKind.SEASON:
             season = self._season(intent.arguments, today)
@@ -102,6 +117,7 @@ class CommandHandler:
                 command=f"季度番剧 {season.year} {season.name.value}",
                 page=intent.page,
                 force_compact=intent.force_compact,
+                image_proxy_base_url=self._image_proxy_base_url,
             )
         if intent.kind is CommandKind.SEARCH:
             query = " ".join(intent.arguments)
@@ -110,17 +126,23 @@ class CommandHandler:
                 command=f"搜索 {query}",
                 page=intent.page,
                 force_compact=intent.force_compact,
+                image_proxy_base_url=self._image_proxy_base_url,
             )
         if intent.kind in {CommandKind.DETAIL, CommandKind.NEXT_AIRING}:
             detail = await self._resolve(" ".join(intent.arguments))
             if detail is None:
                 return OutboundMessage("没有找到对应番剧。")
             if intent.kind is CommandKind.DETAIL:
-                return render_detail(detail)
+                return render_detail(detail, image_proxy_base_url=self._image_proxy_base_url)
             occurrence = await self._catalog.get_next_airing(
                 detail.subject_id, after=self._clock.now()
             )
-            return render_next(detail, occurrence, self._timezone)
+            return render_next(
+                detail,
+                occurrence,
+                self._timezone,
+                image_proxy_base_url=self._image_proxy_base_url,
+            )
         if intent.kind in {CommandKind.SUBSCRIBE, CommandKind.UNSUBSCRIBE}:
             detail = await self._resolve(" ".join(intent.arguments))
             if detail is None:
@@ -148,6 +170,7 @@ class CommandHandler:
                 command="我的订阅",
                 page=intent.page,
                 force_compact=intent.force_compact,
+                image_proxy_base_url=self._image_proxy_base_url,
             )
         return render_help()
 
@@ -158,7 +181,21 @@ class CommandHandler:
         return await self._catalog.get_detail(results[0].subject_id) if len(results) == 1 else None
 
     async def _reply(self, event: QQEvent, text: str) -> None:
-        await self._gateway.reply(event, OutboundMessage(text))
+        result = await self._gateway.reply(event, OutboundMessage(text))
+        self._log_failed_delivery("reply", result)
+
+    @staticmethod
+    def _log_failed_delivery(operation: str, result: DeliveryResult) -> None:
+        if result.outcome is DeliveryOutcome.SENT:
+            return
+        logger.warning(
+            {
+                "event": "qq_delivery_failed",
+                "operation": operation,
+                "outcome": result.outcome,
+                "error_code": result.error_code,
+            }
+        )
 
     @staticmethod
     def _season(arguments: tuple[str, ...], today: date) -> Season:

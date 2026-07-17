@@ -61,6 +61,20 @@ docker compose exec worker python -c "import urllib.request; print(urllib.reques
 
 查询会继续使用数据库中的最近一次成功快照，并在数据陈旧时提示。检查 worker 日志和 `BANGUMI_USER_AGENT`；不要通过提高扫描频率绕过上游限制。
 
+### 封面无法加载
+
+确认 `.env` 中 `QQ_IMAGE_PROXY_BASE_URL` 使用自有 HTTPS 域名，并且反向代理已将 `/qqbot/media/` 转发到 bot。选择一个数据库中存在的条目验证：
+
+```bash
+curl -fsS -o /dev/null -D - https://你的域名/qqbot/media/covers/<Bangumi-ID>
+```
+
+预期返回 `200`、`Content-Type: image/jpeg` 或 `image/png`，以及一天的公共缓存响应头。同时确认 QQ 开放平台“消息 URL 配置”中已配置并验证 `你的域名/qqbot/media`。日志事件 `qq_cover_proxy_rejected` 会给出上游状态、类型、大小或来源拒绝原因，但不会记录图片原始 URL。
+
+### 按钮显示成功但没有新消息
+
+检查按钮后的群消息请求。日志事件 `qq_api_request_failed` 会安全记录 HTTP 状态、QQ 错误码和错误说明；`qq_delivery_failed` 记录最终投递结果。按钮回复应使用 `event_id`，不应把 `INTERACTION_CREATE:...` 作为 `msg_id` 发送。
+
 ## 安全
 
 - `.env` 权限保持 `0600`，不得提交到 Git；

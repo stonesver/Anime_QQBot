@@ -82,6 +82,33 @@ def test_short_listing_is_a_five_item_image_page_with_next_button() -> None:
     ]
 
 
+def test_card_images_use_configured_first_party_proxy() -> None:
+    listing = CatalogListing(
+        (
+            AnimeSummary(
+                1001,
+                "代理封面",
+                "Proxied cover",
+                date(2026, 7, 16),
+                image_url="https://lain.bgm.tv/pic/cover/example.jpg",
+            ),
+        ),
+        (),
+        CatalogFreshness(None, None, False, False),
+    )
+
+    message = render_listing(
+        "今日番剧",
+        listing,
+        ZoneInfo("Asia/Shanghai"),
+        image_proxy_base_url="https://animebot.stonebg.cn/qqbot/media/covers",
+    )
+
+    assert message.markdown is not None
+    assert "https://animebot.stonebg.cn/qqbot/media/covers/1001" in message.markdown
+    assert "lain.bgm.tv" not in message.markdown
+
+
 def test_medium_listing_is_grouped_structured_markdown_without_images() -> None:
     subjects = tuple(
         AnimeSummary(

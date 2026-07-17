@@ -99,6 +99,7 @@ def render_listing(
     command: str = "",
     page: int = 1,
     force_compact: bool = False,
+    image_proxy_base_url: str | None = None,
 ) -> OutboundMessage:
     subjects = tuple(subject for subject in listing.subjects if not subject.nsfw)
     if not subjects:
@@ -135,6 +136,7 @@ def render_listing(
             total_pages,
             len(subjects),
             listing.freshness.is_stale,
+            image_proxy_base_url=image_proxy_base_url,
         )
         fallback_markdown = _render_card_markdown(
             title,
@@ -189,6 +191,7 @@ def _render_card_markdown(
     stale: bool,
     *,
     include_images: bool = True,
+    image_proxy_base_url: str | None = None,
 ) -> str:
     lines = [
         f"# {_escape_markdown(title)}",
@@ -201,7 +204,8 @@ def _render_card_markdown(
             and subject.image_url.startswith(("https://", "http://"))
         ):
             alt = subject.title.replace("[", "").replace("]", "")
-            lines.extend(["", f"![{alt} #200px #112px]({subject.image_url})"])
+            cover_url = _cover_url(subject.subject_id, subject.image_url, image_proxy_base_url)
+            lines.extend(["", f"![{alt} #200px #112px]({cover_url})"])
         lines.extend(["", f"## {_escape_markdown(subject.title)}"])
         occurrence = occurrences.get(subject.subject_id)
         if occurrence:
@@ -321,6 +325,7 @@ def render_search(
     command: str = "搜索",
     page: int = 1,
     force_compact: bool = False,
+    image_proxy_base_url: str | None = None,
 ) -> OutboundMessage:
     safe = [item for item in results if not item.nsfw]
     if not safe:
@@ -336,6 +341,7 @@ def render_search(
         command=command,
         page=page,
         force_compact=force_compact,
+        image_proxy_base_url=image_proxy_base_url,
     )
     mode = PresentationMode.COMPACT if force_compact else select_presentation_mode(len(safe))
     page_size = {
@@ -360,6 +366,7 @@ def render_subjects(
     command: str,
     page: int = 1,
     force_compact: bool = False,
+    image_proxy_base_url: str | None = None,
 ) -> OutboundMessage:
     return render_listing(
         title,
@@ -372,17 +379,21 @@ def render_subjects(
         command=command,
         page=page,
         force_compact=force_compact,
+        image_proxy_base_url=image_proxy_base_url,
     )
 
 
-def render_detail(detail: AnimeDetail) -> OutboundMessage:
+def render_detail(
+    detail: AnimeDetail, *, image_proxy_base_url: str | None = None
+) -> OutboundMessage:
     if detail.nsfw:
         return OutboundMessage("该条目不可展示。")
     lines = [f"{detail.title}（Bangumi {detail.subject_id}）"]
     markdown = [f"# {_escape_markdown(detail.title)}"]
     if detail.image_url and detail.image_url.startswith(("https://", "http://")):
         alt = detail.title.replace("[", "").replace("]", "")
-        markdown.extend(["", f"![{alt} #320px #180px]({detail.image_url})"])
+        cover_url = _cover_url(detail.subject_id, detail.image_url, image_proxy_base_url)
+        markdown.extend(["", f"![{alt} #320px #180px]({cover_url})"])
     if detail.air_date:
         lines.append(f"首播：{detail.air_date.isoformat()}")
         markdown.extend(["", f"首播：**{detail.air_date.isoformat()}**"])
@@ -405,7 +416,11 @@ def render_detail(detail: AnimeDetail) -> OutboundMessage:
 
 
 def render_next(
-    detail: AnimeDetail, occurrence: AiringOccurrence | None, timezone: ZoneInfo
+    detail: AnimeDetail,
+    occurrence: AiringOccurrence | None,
+    timezone: ZoneInfo,
+    *,
+    image_proxy_base_url: str | None = None,
 ) -> OutboundMessage:
     if occurrence is None:
         text = f"{detail.title} 暂无下一次预计放送数据。"
@@ -423,7 +438,8 @@ def render_next(
     markdown = [f"# {_escape_markdown(detail.title)}"]
     if detail.image_url and detail.image_url.startswith(("https://", "http://")):
         alt = detail.title.replace("[", "").replace("]", "")
-        markdown.extend(["", f"![{alt} #320px #180px]({detail.image_url})"])
+        cover_url = _cover_url(detail.subject_id, detail.image_url, image_proxy_base_url)
+        markdown.extend(["", f"![{alt} #320px #180px]({cover_url})"])
     markdown.extend(
         [
             "",
@@ -446,3 +462,9 @@ def _schedule(occurrence: AiringOccurrence, timezone: ZoneInfo) -> str:
     if local is None:
         return f" — 预计 {occurrence.air_date.isoformat()} 放送"
     return f" — 预计 {local:%Y-%m-%d %H:%M}（{timezone.key}）放送"
+
+
+def _cover_url(subject_id: int, original_url: str, proxy_base_url: str | None) -> str:
+    if proxy_base_url:
+        return f"{proxy_base_url.rstrip('/')}/{subject_id}"
+    return original_url
