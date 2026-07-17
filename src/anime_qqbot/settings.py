@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     qq_app_id: str | None = None
     qq_app_secret: SecretStr | None = None
     qq_event_transport: Literal["webhook", "websocket"] = "webhook"
+    qq_image_proxy_base_url: str | None = None
     bootstrap_admin_identities: tuple[AdminIdentity, ...] = ()
     default_timezone: str = "Asia/Shanghai"
     log_level: str = "INFO"
@@ -45,6 +46,19 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_bangumi_api_base_url(cls, value: str) -> str:
         return cls._normalize_bangumi_url(value)
+
+    @field_validator("qq_image_proxy_base_url")
+    @classmethod
+    def normalize_qq_image_proxy_base_url(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
+            raise ValueError(
+                "QQ image proxy base URL must use https without query parameters or fragments"
+            )
+        return normalized
 
     @field_validator("bangumi_api_fallback_urls", mode="before")
     @classmethod

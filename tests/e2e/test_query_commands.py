@@ -1,5 +1,7 @@
 from datetime import UTC, date, datetime
 
+import pytest
+
 from anime_qqbot.catalog.models import AnimeDetail, AnimeSummary, CatalogFreshness
 from anime_qqbot.catalog.module import AnimeCatalog
 from anime_qqbot.clock import FrozenClock
@@ -7,7 +9,7 @@ from anime_qqbot.commands.agent import DisabledAgentRuntime
 from anime_qqbot.commands.handlers import CommandHandler
 from anime_qqbot.commands.parser import CommandParser
 from anime_qqbot.commands.router import CommandRouter
-from anime_qqbot.qq.contracts import QQEvent, QQEventType
+from anime_qqbot.qq.contracts import DeliveryOutcome, QQEvent, QQEventType
 from anime_qqbot.qq.fake import FakeQQGateway
 
 
@@ -101,6 +103,71 @@ async def test_today_query_replies_with_adaptive_markdown_and_paging() -> None:
         "今日番剧 2026-07-15 --page=2",
         "今日番剧 2026-07-15 --view=compact",
     ]
+
+
+async def test_today_query_uses_configured_first_party_cover_proxy() -> None:
+    gateway = FakeQQGateway()
+    handler = CommandHandler(
+        CommandRouter(CommandParser(), DisabledAgentRuntime()),
+        AnimeCatalog(QueryStore()),  # type: ignore[arg-type]
+        NoSubscriptions(),  # type: ignore[arg-type]
+        gateway,
+        FrozenClock(datetime(2026, 7, 15, tzinfo=UTC)),
+        image_proxy_base_url="https://animebot.stonebg.cn/qqbot/media/covers",
+    )
+    event = QQEvent(
+        "event-today",
+        QQEventType.C2C_MESSAGE,
+        datetime.now(UTC),
+        content="今日番剧",
+        user_openid="user",
+    )
+
+    await handler.handle(event)
+
+    message = gateway.replies[0][1]
+    assert message.markdown is not None
+    assert message.markdown.count("animebot.stonebg.cn/qqbot/media/covers/") == 5
+    assert "example.test" not in message.markdown
+
+
+async def test_failed_reply_is_logged_without_message_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = FakeQQGateway()
+    gateway.fail_next(DeliveryOutcome.PERMANENT_FAILURE, error_code="40034025")
+    handler = CommandHandler(
+        CommandRouter(CommandParser(), DisabledAgentRuntime()),
+        AnimeCatalog(QueryStore()),  # type: ignore[arg-type]
+        NoSubscriptions(),  # type: ignore[arg-type]
+        gateway,
+        FrozenClock(datetime(2026, 7, 15, tzinfo=UTC)),
+    )
+    event = QQEvent(
+        "event-detail",
+        QQEventType.C2C_MESSAGE,
+        datetime.now(UTC),
+        content="番剧 1001",
+        user_openid="user",
+    )
+
+    records: list[object] = []
+    monkeypatch.setattr(
+        "anime_qqbot.commands.handlers.logger.warning",
+        records.append,
+    )
+
+    await handler.handle(event)
+
+    assert records == [
+        {
+            "event": "qq_delivery_failed",
+            "operation": "reply",
+            "outcome": DeliveryOutcome.PERMANENT_FAILURE,
+            "error_code": "40034025",
+        }
+    ]
+    assert "端到端" not in str(records)
 
 
 async def test_search_query_uses_cards_and_keeps_direct_detail_actions() -> None:

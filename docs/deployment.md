@@ -30,6 +30,7 @@ BANGUMI_API_FALLBACK_URLS=
 QQ_APP_ID=<QQ 机器人 AppID>
 QQ_APP_SECRET=<QQ 机器人 AppSecret>
 QQ_EVENT_TRANSPORT=webhook
+QQ_IMAGE_PROXY_BASE_URL=https://animebot.stonebg.cn/qqbot/media/covers
 ```
 
 `BANGUMI_ACCESS_TOKEN` 是可选项。若服务器无法稳定访问官方 API，可在
@@ -47,13 +48,19 @@ docker compose ps
 docker compose logs --tail=100 migrate bot worker
 ```
 
-启动顺序由 Compose 保证：PostgreSQL 健康后运行一次迁移，迁移成功后才启动 bot 与 worker。PostgreSQL 和 worker 不发布端口；bot 只绑定宿主机 `127.0.0.1:8080`，需要由 HTTPS 反向代理公开 `/qqbot`。
+启动顺序由 Compose 保证：PostgreSQL 健康后运行一次迁移，迁移成功后才启动 bot 与 worker。PostgreSQL 和 worker 不发布端口；bot 只绑定宿主机 `127.0.0.1:8080`，需要由 HTTPS 反向代理公开 `/qqbot` 和 `/qqbot/media/`。后者只按数据库中的 Bangumi 条目 ID 代理封面，并限制为可信图片来源。
 
 Nginx 示例：
 
 ```nginx
 location = /qqbot {
     proxy_pass http://127.0.0.1:8080/qqbot;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;
+}
+
+location ^~ /qqbot/media/ {
+    proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto https;
 }
@@ -68,9 +75,10 @@ location = /qqbot {
 1. 创建官方机器人并取得 `AppID`、`AppSecret`；
 2. 按控制台当前要求配置服务器出口 IP 白名单和沙箱/测试群；
 3. 将 `https://你的域名/qqbot` 配置为事件回调地址，完成平台签名挑战；
-4. 订阅群聊、C2C、互动和机器人进退群等所需事件，开通主动消息相关权限；
-5. 将机器人加入测试群，先验证 `帮助`、`今日番剧`，再开启定时推送；
-6. 正式发布前完成平台要求的审核与配置切换。
+4. 在“开发设置 → 消息 URL 配置”中配置自有地址前缀 `你的域名/qqbot/media`，按控制台要求完成备案和域名所有权校验；不要配置无法验证所有权的第三方 `lain.bgm.tv`；
+5. 订阅群聊、C2C、互动和机器人进退群等所需事件，开通主动消息相关权限；
+6. 将机器人加入测试群，先验证 `帮助`、`今日番剧` 和翻页按钮，再开启定时推送；
+7. 正式发布前完成平台要求的审核与配置切换。
 
 ## 更新
 

@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -63,6 +64,28 @@ def test_maps_documented_group_member_field_for_button_interaction() -> None:
     assert interaction.group_openid == "group-1"
     assert interaction.member_openid == "member-1"
     assert interaction.is_group
+
+
+def test_maps_real_interaction_id_only_as_event_id() -> None:
+    interaction = map_dispatch(
+        {
+            "op": 0,
+            "t": "INTERACTION_CREATE",
+            "d": {
+                "id": "INTERACTION_CREATE:interaction-1",
+                "type": 11,
+                "chat_type": 1,
+                "group_openid": "group-1",
+                "group_member_openid": "member-1",
+                "timestamp": "2026-07-16T09:46:10Z",
+                "data": {"resolved": {"button_data": "今日番剧 --page=2"}},
+            },
+        }
+    )
+
+    assert interaction is not None
+    assert interaction.event_id == "INTERACTION_CREATE:interaction-1"
+    assert interaction.message_id is None
 
 
 @respx.mock
@@ -148,6 +171,98 @@ async def test_button_interaction_can_be_acknowledged_before_rendering_reply() -
 
     assert result.outcome.value == "sent"
     assert json.loads(acknowledge.calls[0].request.content) == {"code": 0}
+
+
+@respx.mock
+async def test_button_result_uses_event_id_instead_of_msg_id() -> None:
+    respx.post("https://bots.qq.com/app/getAppAccessToken").mock(
+        return_value=httpx.Response(
+            200, json={"access_token": "secret-token", "expires_in": "7200"}
+        )
+    )
+    send = respx.post("https://api.sgroup.qq.com/v2/groups/group-1/messages").mock(
+        return_value=httpx.Response(200, json={"id": "message-id"})
+    )
+    interaction = map_dispatch(
+        {
+            "op": 0,
+            "t": "INTERACTION_CREATE",
+            "d": {
+                "id": "INTERACTION_CREATE:interaction-1",
+                "type": 11,
+                "chat_type": 1,
+                "group_openid": "group-1",
+                "group_member_openid": "member-1",
+                "timestamp": "2026-07-16T09:46:10Z",
+                "data": {"resolved": {"button_data": "今日番剧 --page=2"}},
+            },
+        }
+    )
+    assert interaction is not None
+
+    async with httpx.AsyncClient() as client:
+        gateway = OfficialQQGateway(
+            QQAccessTokenProvider(
+                "app",
+                "secret",
+                FrozenClock(datetime(2026, 7, 15, tzinfo=UTC)),
+                client,
+            ),
+            client,
+        )
+        await gateway.reply(interaction, OutboundMessage("第二页"))
+
+    payload = json.loads(send.calls[0].request.content)
+    assert payload["event_id"] == "INTERACTION_CREATE:interaction-1"
+    assert "msg_id" not in payload
+
+
+@respx.mock
+async def test_failed_qq_request_logs_safe_platform_error(caplog: object) -> None:
+    respx.post("https://bots.qq.com/app/getAppAccessToken").mock(
+        return_value=httpx.Response(
+            200, json={"access_token": "secret-token", "expires_in": "7200"}
+        )
+    )
+    respx.post("https://api.sgroup.qq.com/v2/groups/group-1/messages").mock(
+        return_value=httpx.Response(
+            400,
+            json={"code": 40034025, "message": "invalid event id"},
+        )
+    )
+    group_event = map_dispatch(event("group_at.json"))
+    assert group_event is not None
+
+    with caplog.at_level(logging.WARNING, logger="anime_qqbot.qq.official"):  # type: ignore[attr-defined]
+        async with httpx.AsyncClient() as client:
+            gateway = OfficialQQGateway(
+                QQAccessTokenProvider(
+                    "app",
+                    "secret",
+                    FrozenClock(datetime(2026, 7, 15, tzinfo=UTC)),
+                    client,
+                ),
+                client,
+            )
+            await gateway.reply(group_event, OutboundMessage("secret message body"))
+
+    records = [
+        record.msg
+        for record in caplog.records  # type: ignore[attr-defined]
+        if isinstance(record.msg, dict) and record.msg.get("event") == "qq_api_request_failed"
+    ]
+    assert records == [
+        {
+            "event": "qq_api_request_failed",
+            "method": "POST",
+            "path": "/v2/groups/group-1/messages",
+            "status_code": 400,
+            "qq_code": "40034025",
+            "qq_message": "invalid event id",
+        }
+    ]
+    assert "secret-token" not in str(records)
+    assert "secret message body" not in str(records)
 
 
 @respx.mock

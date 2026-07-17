@@ -6,10 +6,11 @@ from typing import Protocol
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI, Request, status
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from anime_qqbot.entrypoints.health import create_health_app
 from anime_qqbot.qq.contracts import QQEvent
+from anime_qqbot.qq.media_proxy import CoverProxyError, CoverTooLargeError, ProxiedCover
 from anime_qqbot.qq.official import map_dispatch
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 class WebhookEventHandler(Protocol):
     async def handle(self, event: QQEvent) -> None: ...
+
+
+class CoverProxy(Protocol):
+    async def fetch(self, subject_id: int) -> ProxiedCover | None: ...
 
 
 class QQWebhookVerifier:
@@ -42,9 +47,32 @@ class QQWebhookVerifier:
         return self._private_key.sign(timestamp.encode() + content).hex()
 
 
-def create_qq_webhook_app(secret: str, handler: WebhookEventHandler) -> FastAPI:
+def create_qq_webhook_app(
+    secret: str,
+    handler: WebhookEventHandler,
+    *,
+    cover_proxy: CoverProxy | None = None,
+) -> FastAPI:
     verifier = QQWebhookVerifier(secret)
     app = create_health_app()
+
+    if cover_proxy is not None:
+
+        @app.get("/qqbot/media/covers/{subject_id}")
+        async def qqbot_cover(subject_id: int) -> Response:
+            try:
+                cover = await cover_proxy.fetch(subject_id)
+            except CoverTooLargeError:
+                return Response(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
+            except CoverProxyError:
+                return Response(status_code=status.HTTP_502_BAD_GATEWAY)
+            if cover is None:
+                return Response(status_code=status.HTTP_404_NOT_FOUND)
+            return Response(
+                content=cover.content,
+                media_type=cover.media_type,
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
 
     @app.post("/qqbot")
     async def qqbot(request: Request) -> JSONResponse:

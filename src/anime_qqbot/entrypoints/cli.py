@@ -30,6 +30,7 @@ from anime_qqbot.notifications.delivery import DeliveryRepository, NotificationD
 from anime_qqbot.notifications.planner import NotificationPlanner
 from anime_qqbot.persistence.session import create_engine, create_session_factory
 from anime_qqbot.qq.auth import QQAccessTokenProvider
+from anime_qqbot.qq.media_proxy import QQCoverProxy
 from anime_qqbot.qq.official import OfficialQQGateway
 from anime_qqbot.qq.webhook import create_qq_webhook_app
 from anime_qqbot.scheduling.admin import ScheduleAdminService
@@ -75,12 +76,21 @@ async def run_bot() -> None:
             clock,
             settings.default_timezone,
             admin,
+            settings.qq_image_proxy_base_url,
         )
         processor = EventProcessor(GroupManager(groups), handler)
         if settings.qq_event_transport == "webhook":
             server = uvicorn.Server(
                 uvicorn.Config(
-                    create_qq_webhook_app(secret, processor),
+                    create_qq_webhook_app(
+                        secret,
+                        processor,
+                        cover_proxy=(
+                            QQCoverProxy(catalog, client)
+                            if settings.qq_image_proxy_base_url
+                            else None
+                        ),
+                    ),
                     host="0.0.0.0",
                     port=8080,
                     log_level="warning",

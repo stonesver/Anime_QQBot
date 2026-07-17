@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from collections.abc import AsyncIterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -29,6 +30,8 @@ EVENT_TYPES = {
 
 FORMAT_REJECTION_CODES = {"304082", "304083"}
 
+logger = logging.getLogger(__name__)
+
 
 def map_dispatch(payload: Mapping[str, object]) -> QQEvent | None:
     event_type = EVENT_TYPES.get(str(payload.get("t")))
@@ -52,12 +55,17 @@ def map_dispatch(payload: Mapping[str, object]) -> QQEvent | None:
         resolved = interaction.get("resolved")
         if isinstance(resolved, Mapping):
             button_data = _text(resolved.get("button_data"))
+    message_id = (
+        _text(data.get("id"))
+        if event_type in {QQEventType.GROUP_AT_MESSAGE, QQEventType.C2C_MESSAGE}
+        else None
+    )
     return QQEvent(
         event_id=_text(payload.get("id")) or _text(data.get("id")) or "unknown",
         event_type=event_type,
         occurred_at=timestamp,
         content=_text(data.get("content")) or "",
-        message_id=_text(data.get("id")),
+        message_id=message_id,
         group_openid=group_openid,
         member_openid=member_openid,
         user_openid=user_openid,
@@ -189,11 +197,25 @@ class OfficialQQGateway:
             response = await self._authorized_request(method, path, json=payload)
         except httpx.TimeoutException:
             return DeliveryResult(DeliveryOutcome.UNKNOWN, error_code="timeout")
-        body = response.json() if response.content else {}
+        try:
+            body = response.json() if response.content else {}
+        except ValueError:
+            body = {}
         code = str(body.get("code", "")) if isinstance(body, Mapping) else ""
         if response.is_success:
             message_id = _text(body.get("id")) if isinstance(body, Mapping) else None
             return DeliveryResult(DeliveryOutcome.SENT, message_id)
+        message = _text(body.get("message")) if isinstance(body, Mapping) else None
+        logger.warning(
+            {
+                "event": "qq_api_request_failed",
+                "method": method,
+                "path": path,
+                "status_code": response.status_code,
+                "qq_code": code,
+                "qq_message": message,
+            }
+        )
         if response.status_code == 429 or code == "22009":
             retry_after = response.headers.get("Retry-After")
             return DeliveryResult(

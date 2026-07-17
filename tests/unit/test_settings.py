@@ -29,6 +29,7 @@ def test_settings_expose_safe_operational_defaults() -> None:
     assert settings.processed_event_retention_days == 7
     assert settings.delivery_retention_days == 90
     assert settings.qq_event_transport == "webhook"
+    assert settings.qq_image_proxy_base_url is None
 
 
 def test_bot_credentials_are_required_only_when_bot_runtime_starts() -> None:
@@ -88,6 +89,27 @@ def test_bangumi_api_fallback_urls_parse_comma_separated_environment_value() -> 
 def test_invalid_bangumi_api_url_is_rejected(url: str) -> None:
     with pytest.raises(ValidationError, match="must use http or https"):
         make_settings(bangumi_api_base_url=url)
+
+
+def test_qq_image_proxy_base_url_is_normalized() -> None:
+    settings = make_settings(
+        qq_image_proxy_base_url=" https://animebot.stonebg.cn/qqbot/media/covers/ "
+    )
+
+    assert settings.qq_image_proxy_base_url == "https://animebot.stonebg.cn/qqbot/media/covers"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://animebot.stonebg.cn/qqbot/media/covers",
+        "https://animebot.stonebg.cn/qqbot/media/covers?token=secret",
+        "https://animebot.stonebg.cn/qqbot/media/covers#fragment",
+    ],
+)
+def test_invalid_qq_image_proxy_base_url_is_rejected(url: str) -> None:
+    with pytest.raises(ValidationError, match="QQ image proxy base URL"):
+        make_settings(qq_image_proxy_base_url=url)
 
 
 def test_env_file_path_is_not_part_of_settings_state(tmp_path: Path) -> None:
