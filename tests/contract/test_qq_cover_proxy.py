@@ -39,6 +39,26 @@ async def test_cover_proxy_fetches_allowlisted_public_image() -> None:
     assert cover.media_type == "image/jpeg"
 
 
+@respx.mock
+async def test_cover_proxy_upgrades_legacy_anibt_image_to_https() -> None:
+    stored_url = "http://bgmimg.anibt.net/pic/cover/test.jpg"
+    upstream_url = "https://bgmimg.anibt.net/pic/cover/test.jpg"
+    request = respx.get(upstream_url).mock(
+        return_value=httpx.Response(
+            200,
+            content=b"mirror-jpeg-data",
+            headers={"Content-Type": "image/jpeg"},
+        )
+    )
+
+    async with httpx.AsyncClient() as client:
+        cover = await QQCoverProxy(DetailCatalog(_detail(stored_url)), client).fetch(1001)
+
+    assert request.called
+    assert cover.content == b"mirror-jpeg-data"
+    assert cover.media_type == "image/jpeg"
+
+
 async def test_cover_proxy_returns_not_found_for_missing_cover() -> None:
     async with httpx.AsyncClient() as client:
         cover = await QQCoverProxy(DetailCatalog(_detail(None)), client).fetch(1001)
@@ -51,6 +71,14 @@ async def test_cover_proxy_rejects_untrusted_upstream_host() -> None:
         with pytest.raises(CoverProxyError, match="untrusted upstream"):
             await QQCoverProxy(
                 DetailCatalog(_detail("https://attacker.example/cover.jpg")), client
+            ).fetch(1001)
+
+
+async def test_cover_proxy_rejects_http_for_official_image_host() -> None:
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(CoverProxyError, match="untrusted upstream"):
+            await QQCoverProxy(
+                DetailCatalog(_detail("http://lain.bgm.tv/pic/cover.jpg")), client
             ).fetch(1001)
 
 
