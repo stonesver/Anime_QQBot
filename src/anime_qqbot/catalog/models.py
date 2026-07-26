@@ -1,6 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import StrEnum
+from typing import Any, NewType
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 
@@ -120,3 +122,112 @@ class CatalogListing:
     subjects: tuple[AnimeSummary, ...]
     occurrences: tuple[AiringOccurrence, ...]
     freshness: CatalogFreshness
+
+
+# ---------------------------------------------------------------------------
+# Multisource identity (Task 1)
+# ---------------------------------------------------------------------------
+
+
+# Internal IDs are immutable UUIDs. Database generates them; downstream code
+# never reconstructs them from external source IDs.
+AnimeId = NewType("AnimeId", UUID)
+ExternalEntryId = NewType("ExternalEntryId", UUID)
+
+
+class SourceName(StrEnum):
+    """External sources participating in the unified catalog."""
+
+    BANGUMI = "bangumi"
+    ANILIST = "anilist"
+    MIKAN = "mikan"
+
+
+class LinkStatus(StrEnum):
+    """Audit status for a Source Link between an Anime and an External Entry."""
+
+    CONFIRMED = "confirmed"
+    PROBABLE = "probable"
+    UNRESOLVED = "unresolved"
+    REJECTED = "rejected"
+
+    @classmethod
+    def default_for_new_matches(cls) -> "LinkStatus":
+        # Automated matching never starts at CONFIRMED; review must promote it.
+        return cls.UNRESOLVED
+
+    def notifies(self) -> bool:
+        return self is LinkStatus.CONFIRMED
+
+    def is_terminal_negative(self) -> bool:
+        return self is LinkStatus.REJECTED
+
+
+class LinkEvidenceType(StrEnum):
+    """How a Source Link's evidence was collected."""
+
+    MANUAL = "manual"
+    CROSS_ID = "cross_id"
+    MIKAN_BANGUMI_LINK = "mikan_bangumi_link"
+    TITLE_SEASON_YEAR = "title_season_year"
+    TITLE_FUZZY = "title_fuzzy"
+
+
+@dataclass(frozen=True)
+class ExternalEntry:
+    """A row in `external_entries`: one external record, identified by source + id."""
+
+    id: ExternalEntryId
+    source: SourceName
+    external_id: str
+    url: str | None
+    disabled: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.external_id:
+            raise ValueError("external_id must be a non-empty string")
+
+
+@dataclass(frozen=True)
+class SourceLink:
+    """An audited link between an internal Anime and an External Entry."""
+
+    external_entry_id: ExternalEntryId
+    status: LinkStatus
+    evidence_type: LinkEvidenceType
+    confidence: float
+    method: str
+    created_at: datetime
+    evidence: tuple[Any, ...] = field(default_factory=tuple)
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be within [0.0, 1.0]")
+        if self.reviewed_at is not None and self.reviewed_at.tzinfo is None:
+            raise ValueError("reviewed_at must be timezone-aware")
+        if self.created_at.tzinfo is None:
+            raise ValueError("created_at must be timezone-aware")
+
+
+@dataclass(frozen=True)
+class SourceSnapshot:
+    """A versioned view of an External Entry's normalized payload."""
+
+    external_entry_id: ExternalEntryId
+    version: int
+    payload: dict[str, Any]
+    source_time: datetime
+    fetched_at: datetime
+    expires_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if self.version < 1:
+            raise ValueError("version must be a positive integer")
+        if self.source_time.tzinfo is None:
+            raise ValueError("source_time must be timezone-aware")
+        if self.fetched_at.tzinfo is None:
+            raise ValueError("fetched_at must be timezone-aware")
+        if self.expires_at is not None and self.expires_at.tzinfo is None:
+            raise ValueError("expires_at must be timezone-aware")
