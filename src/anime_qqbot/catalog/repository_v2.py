@@ -244,6 +244,37 @@ class CatalogWriteRepository:
                 row.updated_at = datetime.now(UTC)
                 await session.commit()
 
+    async def find_source_link(
+        self,
+        *,
+        anime_id: UUID | None,
+        external_entry_id: UUID,
+    ) -> AnimeSourceLink | None:
+        async with self._session_factory() as session:
+            stmt = select(AnimeSourceLink).where(
+                AnimeSourceLink.external_entry_id == external_entry_id,
+            )
+            if anime_id is not None:
+                stmt = stmt.where(AnimeSourceLink.anime_id == anime_id)
+            return (await session.execute(stmt.limit(1))).scalar_one_or_none()
+
+    async def set_link_status(
+        self,
+        *,
+        link_id: UUID,
+        status: str,
+        reviewed_by: str,
+    ) -> AnimeSourceLink:
+        async with self._session_factory() as session:
+            link = await session.get(AnimeSourceLink, link_id)
+            assert link is not None
+            link.status = status
+            link.reviewed_at = datetime.now(UTC)
+            link.reviewed_by = reviewed_by
+            await session.commit()
+            await session.refresh(link)
+            return link
+
     async def _find_entry(
         self, session: AsyncSession, provider: str, external_id: str
     ) -> ExternalEntry | None:
