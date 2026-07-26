@@ -39,10 +39,10 @@ class OutboundMessage:
     mentions: list[str] = field(default_factory=list)
 
 
-from enum import Enum as _Enum
+from enum import StrEnum as _StrEnum  # noqa: E402
 
 
-class _FakeDeliveryOutcomeEnum(str, _Enum):
+class _FakeDeliveryOutcomeEnum(_StrEnum):
     SUCCESS = "success"
     RETRYABLE = "retryable"
     PERMANENT_FAILURE = "permanent_failure"

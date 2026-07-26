@@ -26,7 +26,7 @@ async def render_reply(reply: Reply, event: Any) -> Any:
     if reply.error:
         parts.append(f"错误: {reply.error}")
 
-    text = "\n".join(parts) if parts else "（无内容）"
+    text = "\n".join(parts) if parts else "（无内容）"  # noqa: RUF001
     return text  # tests assert on the returned plain text
 
 
