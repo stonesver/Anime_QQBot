@@ -156,6 +156,7 @@ NapCat 不保存番剧、订阅或通知事实。QQ 登录数据和 NapCat 配�
 负责：
 
 - 把群消息和发送者映射为平台无关的 Chat Context；
+- 在每次群事件中刷新 AstrBot `unified_msg_origin`，供后续主动消息定位会话；
 - 解析固定命令；
 - 可选调用大模型生成结构化意图；
 - 调用 Anime Core 的查询与订阅 interface；
@@ -293,7 +294,7 @@ Source Link 状态：
 - `anime_titles`：Anime 的多语言标题和别名；
 - `airing_occurrences`：Anime、集数、日期/时刻、精度、来源和更新时间；
 - `resource_releases`：Mikan 发布指纹、Mikan External Entry、可空的 Anime 映射、集数、字幕组、语言、分辨率、页面链接和发布时间；
-- `chat_groups`：平台、QQ 群号、时区、启停和创建时间；
+- `chat_groups`：平台、QQ 群号、AstrBot `unified_msg_origin`、时区、启停和创建时间；
 - `group_memberships`：群、QQ 用户号、角色和最近活动时间；
 - `follow_subscriptions`：群、QQ 用户、Anime、开播开关和资源开关；
 - `subscription_resource_filters`：语言、字幕组和分辨率筛选；
@@ -322,7 +323,7 @@ processed_platform_events(platform, event_id)
 ### 9.1 群内查询
 
 1. NapCat 把 OneBot 事件交给 AstrBot。
-2. Anime Plugin 构造 Chat Context 并做事件去重。
+2. Anime Plugin 构造 Chat Context，刷新群的 `unified_msg_origin` 并做事件去重。
 3. 固定命令解析为 Query；自然语言可选地转换为同一种 Query。
 4. Anime Core 只查询 PostgreSQL 的统一投影。
 5. 多候选时返回内部 ID 和编号列表。
@@ -422,6 +423,7 @@ Mikan RSS 调度按唯一 Mikan 番剧 ID 去重，设置全局并发上限、�
 
 - OneBot 断线不丢失 Notification Job。
 - AstrBot 重启后重新获取已过期的数据库租约。
+- 主动投递通过群最近保存的 `unified_msg_origin` 调用 AstrBot `Context.send_message()`；尚未记录 UMO 的群保持任务 pending，并提示管理员先在群内执行一次命令。
 - 无法找到群、机器人已退群或被禁言时记录永久错误并暂停该群的后续投递，等待管理员恢复。
 - 私聊消息不创建群订阅。
 
@@ -584,6 +586,7 @@ worker
 - 重复 RSS、重复平台事件和容器重启不生成重复 Notification Job；
 - 一个来源中断时，其余来源和缓存查询继续工作；
 - AstrBot/NapCat 短时掉线后，未过期任务恢复投递；
+- 群的 `unified_msg_origin` 在 AstrBot 重启后仍可用于主动投递；
 - 请求结果不确定时不自动重复发送；
 - PostgreSQL 备份与恢复演练通过；
 - Worker、AstrBot 和来源新鲜度可观察。
