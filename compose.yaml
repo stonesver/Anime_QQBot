@@ -48,20 +48,6 @@ services:
       postgres:
         condition: service_healthy
 
-  bot:
-    <<: *app
-    command: ["bot"]
-    ports:
-      - "127.0.0.1:${QQ_WEBHOOK_PORT:-8080}:8080"
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=2)"]
-      interval: 15s
-      timeout: 3s
-      retries: 5
-
   worker:
     <<: *app
     command: ["worker"]
@@ -74,5 +60,41 @@ services:
       timeout: 3s
       retries: 5
 
+  napcat:
+    image: napcat/napcat:3.6.0
+    environment:
+      ASTRBOT_REVERSE_WS: ws://astrbot:6199/ws
+      ASTRBOT_REVERSE_TOKEN: ${ONEBOT_TOKEN:-change-me}
+    volumes:
+      - napcat-data:/app/data
+      - napcat-config:/app/config
+    ports:
+      - "127.0.0.1:8082:8080"
+    restart: unless-stopped
+    depends_on:
+      - astrbot
+
+  astrbot:
+    build:
+      context: .
+      dockerfile: Dockerfile.astrbot
+    image: anime-astrbot:${IMAGE_TAG:-latest}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://anime:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/anime
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - astrbot-data:/app/data
+      - astrbot-plugins:/app/plugin
+    ports:
+      - "127.0.0.1:6180:6180"
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   postgres-data:
+  napcat-data:
+  napcat-config:
+  astrbot-data:
+  astrbot-plugins:
