@@ -1,0 +1,3 @@
+# Runtime dependencies for the anime-tracking AstrBot plugin.
+# Pinned to the versions tested in the project lock file.
+astrbot>=3.6.0

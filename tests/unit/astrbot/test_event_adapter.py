@@ -1,0 +1,137 @@
+"""Unit tests for the EventAdapter (Task 9)."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import (
+    EventAdapter,
+    Reply,
+    help_reply,  # noqa: F401
+)
+
+
+async def _noop(ctx, intent):
+    """Stub handler returns a simple text reply."""
+    return Reply(kind="text", blocks=[])
+
+
+async def test_help_command_returns_full_help() -> None:
+    adapter = EventAdapter()
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="123",
+        user_id="456",
+        display_name="test",
+        unified_msg_origin=None,
+        content="/番剧 帮助",
+    )
+
+    assert reply.kind == "help"
+    assert any("本周" in b.text for b in reply.blocks)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "/番剧 今天",
+        "/番剧 本周",
+        "/番剧 季度 夏",
+        "/番剧 搜索 test",
+        "/番剧 详情 test",
+        "/番剧 下次 abc",
+        "/番剧 我的订阅",
+        "/番剧 状态",
+        "/番剧 映射待处理",
+    ],
+)
+async def test_all_fixed_commands_parse_and_dispatch(content: str) -> None:
+    adapter = EventAdapter()
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="123",
+        user_id="456",
+        display_name="test",
+        unified_msg_origin=None,
+        content=content,
+    )
+
+    assert reply.kind in ("text", "error")
+    # Unknown commands return a specific error, not a crash.
+    assert not isinstance(reply, type(None))
+
+
+async def test_unknown_subcommand_returns_error() -> None:
+    adapter = EventAdapter()
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="123",
+        user_id="456",
+        display_name="test",
+        unified_msg_origin=None,
+        content="/番剧 未知",
+    )
+
+    assert reply.error is not None
+
+
+async def test_non_fixed_command_returns_error() -> None:
+    adapter = EventAdapter()
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="123",
+        user_id="456",
+        display_name="test",
+        unified_msg_origin=None,
+        content="今天",
+    )
+
+    assert reply.error is not None
+
+
+async def test_context_is_built_with_timezone() -> None:
+    captured: dict = {}
+
+    async def _capture(ctx, intent):
+        captured["timezone"] = str(ctx.timezone)
+        captured["group_id"] = ctx.group_id
+        return Reply(kind="text", blocks=[])
+
+    adapter = EventAdapter(handlers={"today": _capture})
+
+    await adapter.handle_message(
+        platform="qq",
+        group_id="987",
+        user_id="u1",
+        display_name="dname",
+        unified_msg_origin="umo",
+        content="/番剧 今天",
+        timezone_name="Asia/Tokyo",
+    )
+
+    assert captured["timezone"] == "Asia/Tokyo"
+    assert captured["group_id"] == "987"
+
+
+async def test_unified_msg_origin_passed_through() -> None:
+    adapter = EventAdapter()
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="1",
+        user_id="2",
+        display_name="d",
+        unified_msg_origin="aiocqhttp:g:1",
+        content="/番剧 本周",
+    )
+
+    assert reply is not None  # no crash when UMO is present

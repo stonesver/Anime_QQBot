@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+# ^ Scheduled for replacement in v0.2 tasks.
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

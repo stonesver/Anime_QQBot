@@ -1,14 +1,3 @@
-from collections.abc import AsyncIterator
-from typing import Protocol
+"""Stub — re-exports from _stubs."""
 
-from anime_qqbot.qq.contracts import DeliveryResult, OutboundMessage, QQEvent
-
-
-class QQGateway(Protocol):
-    def events(self) -> AsyncIterator[QQEvent]: ...
-
-    async def acknowledge_interaction(self, event: QQEvent) -> DeliveryResult: ...
-
-    async def reply(self, event: QQEvent, message: OutboundMessage) -> DeliveryResult: ...
-
-    async def send_group(self, group_openid: str, message: OutboundMessage) -> DeliveryResult: ...
+from anime_qqbot.qq._stubs import QQGateway  # noqa: F401

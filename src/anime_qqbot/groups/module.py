@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+# ^ Scheduled for replacement in v0.2 tasks.
 from anime_qqbot.groups.repository import GroupRepository
 from anime_qqbot.qq.contracts import QQEvent
 

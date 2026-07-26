@@ -1,0 +1,18 @@
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir astrbot>=3.6.0
+
+WORKDIR /app
+
+COPY astrbot_plugin_anime_tracking/ ./astrbot_plugin_anime_tracking/
+COPY src/ ./src/
+COPY migrations/ ./migrations/
+COPY alembic.ini ./
+COPY pyproject.toml ./
+
+ENV DATABASE_URL=postgresql+asyncpg://anime:anime@postgres:5432/anime
+ENV PYTHONPATH=/app
+
+EXPOSE 6180
+
+CMD ["python", "-m", "astrbot_plugin_anime_tracking.main"]

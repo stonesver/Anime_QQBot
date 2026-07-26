@@ -1,15 +1,8 @@
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-
-
-class AdminIdentity(BaseModel):
-    model_config = {"frozen": True}
-
-    group_openid: str
-    member_openid: str
 
 
 class Settings(BaseSettings):
@@ -26,11 +19,6 @@ class Settings(BaseSettings):
     bangumi_access_token: SecretStr | None = None
     bangumi_api_base_url: str = "https://api.bgm.tv"
     bangumi_api_fallback_urls: Annotated[tuple[str, ...], NoDecode] = ()
-    qq_app_id: str | None = None
-    qq_app_secret: SecretStr | None = None
-    qq_event_transport: Literal["webhook", "websocket"] = "webhook"
-    qq_image_proxy_base_url: str | None = None
-    bootstrap_admin_identities: tuple[AdminIdentity, ...] = ()
     default_timezone: str = "Asia/Shanghai"
     log_level: str = "INFO"
 
@@ -46,19 +34,6 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_bangumi_api_base_url(cls, value: str) -> str:
         return cls._normalize_bangumi_url(value)
-
-    @field_validator("qq_image_proxy_base_url")
-    @classmethod
-    def normalize_qq_image_proxy_base_url(cls, value: str | None) -> str | None:
-        if value is None or not value.strip():
-            return None
-        normalized = value.strip().rstrip("/")
-        parsed = urlsplit(normalized)
-        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment:
-            raise ValueError(
-                "QQ image proxy base URL must use https without query parameters or fragments"
-            )
-        return normalized
 
     @field_validator("bangumi_api_fallback_urls", mode="before")
     @classmethod
@@ -81,29 +56,6 @@ class Settings(BaseSettings):
             seen.add(url)
             normalized.append(url)
         return tuple(normalized)
-
-    @field_validator("bootstrap_admin_identities", mode="before")
-    @classmethod
-    def parse_admin_identities(cls, value: object) -> object:
-        if value is None or value == "":
-            return ()
-        if not isinstance(value, str):
-            return value
-
-        identities: list[dict[str, str]] = []
-        for raw_identity in value.split(","):
-            parts = [part.strip() for part in raw_identity.split(":", maxsplit=1)]
-            if len(parts) != 2 or not all(parts):
-                raise ValueError(
-                    "BOOTSTRAP_ADMIN_IDENTITIES must use group_openid:member_openid pairs"
-                )
-            identities.append({"group_openid": parts[0], "member_openid": parts[1]})
-        return tuple(identities)
-
-    def require_bot_credentials(self) -> tuple[str, str]:
-        if not self.qq_app_id or self.qq_app_secret is None:
-            raise ValueError("QQ_APP_ID and QQ_APP_SECRET are required for the bot runtime")
-        return self.qq_app_id, self.qq_app_secret.get_secret_value()
 
     @staticmethod
     def _normalize_bangumi_url(value: str) -> str:
