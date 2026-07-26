@@ -1,0 +1,124 @@
+{
+  "rule_version": "v1",
+  "cases": [
+    {
+      "name": "explicit cross-id agreement wins",
+      "evidence": [
+        {
+          "provider": "bangumi",
+          "external_id": "42",
+          "title": "Title A",
+          "year": 2026,
+          "kind": "TV",
+          "cross_id": "anilist:99"
+        },
+        {
+          "provider": "anilist",
+          "external_id": "99",
+          "title": "Title A",
+          "year": 2026,
+          "kind": "TV",
+          "cross_id": "bangumi:42"
+        }
+      ],
+      "expected_status": "confirmed",
+      "expected_evidence_type": "cross_id",
+      "expected_confidence_range": [0.95, 1.0]
+    },
+    {
+      "name": "normalized title plus season plus year plus kind matches",
+      "evidence": [
+        {
+          "provider": "bangumi",
+          "external_id": "50",
+          "title": "  Title  B  ",
+          "season": "summer",
+          "year": 2026,
+          "kind": "TV",
+          "episodes": 12
+        },
+        {
+          "provider": "anilist",
+          "external_id": "101",
+          "title": "Title B",
+          "season": "summer",
+          "year": 2026,
+          "kind": "TV",
+          "episodes": 12
+        }
+      ],
+      "expected_status": "confirmed",
+      "expected_evidence_type": "title_season_year",
+      "expected_confidence_range": [0.85, 0.95]
+    },
+    {
+      "name": "same title different season does not auto-confirm",
+      "evidence": [
+        {
+          "provider": "bangumi",
+          "external_id": "60",
+          "title": "Same Title",
+          "season": "spring",
+          "year": 2025,
+          "kind": "TV"
+        },
+        {
+          "provider": "anilist",
+          "external_id": "102",
+          "title": "Same Title",
+          "season": "winter",
+          "year": 2026,
+          "kind": "TV"
+        }
+      ],
+      "expected_status": "unresolved",
+      "expected_evidence_type": "title_season_year",
+      "expected_confidence_range": [0.0, 0.5]
+    },
+    {
+      "name": "TV vs movie with same title is unresolved",
+      "evidence": [
+        {
+          "provider": "bangumi",
+          "external_id": "70",
+          "title": "Movie Title",
+          "year": 2025,
+          "kind": "movie"
+        },
+        {
+          "provider": "anilist",
+          "external_id": "103",
+          "title": "Movie Title",
+          "year": 2025,
+          "kind": "TV",
+          "episodes": 12
+        }
+      ],
+      "expected_status": "unresolved",
+      "expected_evidence_type": "title_season_year",
+      "expected_confidence_range": [0.0, 0.5]
+    },
+    {
+      "name": "low title similarity never auto-confirms",
+      "evidence": [
+        {
+          "provider": "bangumi",
+          "external_id": "80",
+          "title": "Attack on Titan",
+          "year": 2013,
+          "kind": "TV"
+        },
+        {
+          "provider": "anilist",
+          "external_id": "104",
+          "title": "Totally Different Show",
+          "year": 2024,
+          "kind": "TV"
+        }
+      ],
+      "expected_status": "unresolved",
+      "expected_evidence_type": "title_fuzzy",
+      "expected_confidence_range": [0.0, 0.4]
+    }
+  ]
+}
