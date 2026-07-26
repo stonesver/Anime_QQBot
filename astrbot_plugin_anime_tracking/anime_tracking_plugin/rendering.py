@@ -19,7 +19,7 @@ async def render_reply(reply: Reply, event: Any) -> Any:
             parts.append(block.text)
 
     if reply.candidates:
-        parts.append("多个结果，请通过内部 ID 选择：")
+        parts.append("多个结果，请通过内部 ID 选择：")  # noqa: RUF001
         for idx, cand in enumerate(reply.candidates, start=1):
             parts.append(f"  {idx}. {cand}")
 

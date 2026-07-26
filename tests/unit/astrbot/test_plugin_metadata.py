@@ -54,11 +54,10 @@ def test_requirements_file_is_parseable() -> None:
 
 
 def test_fake_context_can_hold_lifecycle() -> None:
-    from tests.unit.astrbot.fakes import FakeContext
-
     from astrbot_plugin_anime_tracking.anime_tracking_plugin.lifecycle import (
         PluginLifecycle,
     )
+    from tests.unit.astrbot.fakes import FakeContext
 
     ctx = FakeContext()
     lc = PluginLifecycle.from_context(ctx)

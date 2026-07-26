@@ -1,4 +1,12 @@
-from anime_qqbot.qq.contracts import QQEvent, QQEventType
-from anime_qqbot.qq.gateway import QQGateway
+"""QQ runtime stubs — the official QQ bot runtime was deleted in v0.2.0."""
 
-__all__ = ["QQEvent", "QQEventType", "QQGateway"]
+from anime_qqbot.qq._stubs import (  # noqa: F401
+    AgentRuntime,
+    DeliveryOutcome,
+    DeliveryResult,
+    MemberRole,
+    OutboundMessage,
+    QQEvent,
+    QQEventType,
+    QQGateway,
+)

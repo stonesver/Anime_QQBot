@@ -8,8 +8,9 @@ that rendering.py maps to AstrBot message components.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from anime_qqbot.application import (

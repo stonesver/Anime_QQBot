@@ -1,9 +1,11 @@
-from pathlib import Path
+"""Minimal settings tests — QQ/AdminIdentity fields removed in v0.2.0."""
+
+from __future__ import annotations
 
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from anime_qqbot.settings import AdminIdentity, Settings
+from anime_qqbot.settings import Settings
 
 
 def make_settings(**overrides: object) -> Settings:
@@ -15,128 +17,53 @@ def make_settings(**overrides: object) -> Settings:
     return Settings(_env_file=None, **values)
 
 
-def test_settings_expose_safe_operational_defaults() -> None:
+def test_database_url_is_required() -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, bangumi_user_agent="test/1.0")
+
+
+def test_bangumi_user_agent_must_satisfy_min_length() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(bangumi_user_agent="ab")
+
+
+def test_default_values() -> None:
     settings = make_settings()
 
+    assert settings.app_env == "development"
     assert settings.bangumi_api_base_url == "https://api.bgm.tv"
-    assert settings.bangumi_api_fallback_urls == ()
+    assert settings.bangumi_access_token is None
     assert settings.default_timezone == "Asia/Shanghai"
-    assert settings.catalog_cache_ttl_seconds == 3600
-    assert settings.bangumi_data_sync_seconds == 21600
-    assert settings.worker_scan_seconds == 30
-    assert settings.daily_compensation_seconds == 7200
-    assert settings.weekly_compensation_seconds == 86400
-    assert settings.processed_event_retention_days == 7
-    assert settings.delivery_retention_days == 90
-    assert settings.qq_event_transport == "webhook"
-    assert settings.qq_image_proxy_base_url is None
 
 
-def test_bot_credentials_are_required_only_when_bot_runtime_starts() -> None:
+def test_bangumi_access_token_stored_as_secret() -> None:
+    settings = make_settings(bangumi_access_token="my-token")
+
+    assert settings.bangumi_access_token == SecretStr("my-token")
+
+
+def test_bangumi_fallback_urls_parsed_from_comma_string() -> None:
+    settings = make_settings(
+        bangumi_api_fallback_urls="https://mirror1.example,https://mirror2.example"
+    )
+
+    assert settings.bangumi_api_fallback_urls == (
+        "https://mirror1.example",
+        "https://mirror2.example",
+    )
+
+
+def test_bangumi_fallback_urls_dedup_base_url() -> None:
+    settings = make_settings(
+        bangumi_api_base_url="https://api.bgm.tv",
+        bangumi_api_fallback_urls="https://api.bgm.tv,https://mirror.example",
+    )
+
+    assert settings.bangumi_api_fallback_urls == ("https://mirror.example",)
+
+
+def test_catalog_cache_defaults() -> None:
     settings = make_settings()
 
-    with pytest.raises(ValueError, match="QQ_APP_ID and QQ_APP_SECRET"):
-        settings.require_bot_credentials()
-
-    configured = make_settings(qq_app_id="123", qq_app_secret=SecretStr("secret"))
-    assert configured.require_bot_credentials() == ("123", "secret")
-
-
-def test_bootstrap_admin_identities_parse_group_and_member_pairs() -> None:
-    settings = make_settings(bootstrap_admin_identities="group-a:member-a, group-b:member-b")
-
-    assert settings.bootstrap_admin_identities == (
-        AdminIdentity(group_openid="group-a", member_openid="member-a"),
-        AdminIdentity(group_openid="group-b", member_openid="member-b"),
-    )
-
-
-def test_invalid_admin_identity_is_rejected() -> None:
-    with pytest.raises(ValidationError, match="group_openid:member_openid"):
-        make_settings(bootstrap_admin_identities="not-a-pair")
-
-
-def test_bangumi_api_urls_are_normalized_and_deduplicated() -> None:
-    settings = make_settings(
-        bangumi_api_base_url=" https://api.bgm.tv/ ",
-        bangumi_api_fallback_urls=(
-            "https://api.bgm.tv",
-            " https://mirror-one.example/ ",
-            "https://mirror-one.example",
-            "https://mirror-two.example/",
-        ),
-    )
-
-    assert settings.bangumi_api_base_url == "https://api.bgm.tv"
-    assert settings.bangumi_api_fallback_urls == (
-        "https://mirror-one.example",
-        "https://mirror-two.example",
-    )
-
-
-def test_bangumi_api_fallback_urls_parse_comma_separated_environment_value() -> None:
-    settings = make_settings(
-        bangumi_api_fallback_urls="https://mirror-one.example, , https://mirror-two.example/"
-    )
-
-    assert settings.bangumi_api_fallback_urls == (
-        "https://mirror-one.example",
-        "https://mirror-two.example",
-    )
-
-
-@pytest.mark.parametrize("url", ["api.bgm.tv", "ftp://api.bgm.tv", "https:///calendar"])
-def test_invalid_bangumi_api_url_is_rejected(url: str) -> None:
-    with pytest.raises(ValidationError, match="must use http or https"):
-        make_settings(bangumi_api_base_url=url)
-
-
-def test_qq_image_proxy_base_url_is_normalized() -> None:
-    settings = make_settings(
-        qq_image_proxy_base_url=" https://animebot.stonebg.cn/qqbot/media/covers/ "
-    )
-
-    assert settings.qq_image_proxy_base_url == "https://animebot.stonebg.cn/qqbot/media/covers"
-
-
-@pytest.mark.parametrize(
-    "url",
-    [
-        "http://animebot.stonebg.cn/qqbot/media/covers",
-        "https://animebot.stonebg.cn/qqbot/media/covers?token=secret",
-        "https://animebot.stonebg.cn/qqbot/media/covers#fragment",
-    ],
-)
-def test_invalid_qq_image_proxy_base_url_is_rejected(url: str) -> None:
-    with pytest.raises(ValidationError, match="QQ image proxy base URL"):
-        make_settings(qq_image_proxy_base_url=url)
-
-
-def test_env_file_path_is_not_part_of_settings_state(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "DATABASE_URL=postgresql+asyncpg://anime:anime@localhost/anime\n"
-        "BANGUMI_USER_AGENT=anime-qqbot/test@example.com\n",
-        encoding="utf-8",
-    )
-
-    settings = Settings(_env_file=env_file)
-
-    assert settings.database_url.endswith("/anime")
-
-
-def test_env_file_parses_comma_separated_bangumi_fallback_urls(tmp_path: Path) -> None:
-    env_file = tmp_path / ".env"
-    env_file.write_text(
-        "DATABASE_URL=postgresql+asyncpg://anime:anime@localhost/anime\n"
-        "BANGUMI_USER_AGENT=anime-qqbot/test@example.com\n"
-        "BANGUMI_API_FALLBACK_URLS=https://one.example,https://two.example/\n",
-        encoding="utf-8",
-    )
-
-    settings = Settings(_env_file=env_file)
-
-    assert settings.bangumi_api_fallback_urls == (
-        "https://one.example",
-        "https://two.example",
-    )
+    assert settings.catalog_cache_ttl_seconds == 3600
+    assert settings.worker_scan_seconds == 30

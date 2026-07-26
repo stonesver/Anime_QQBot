@@ -22,12 +22,16 @@ from typing import Any
 # Guard AstrBot imports — the SDK is provisioned by AstrBot's runtime,
 # not by the Anime Core dev dependencies.
 try:
-    from astrbot.api.all import AstrBotPlugin, Context, register_event  # type: ignore[import-not-found]  # noqa: F401
+    from astrbot.api.all import (  # type: ignore[import-not-found]
+        AstrBotPlugin,
+        Context,
+        register_event,
+    )
 except ModuleNotFoundError:
-    AstrBotPlugin = object  # type: ignore[misc]  # noqa: N816
-    Context = Any  # type: ignore[misc]  # noqa: N816
+    AstrBotPlugin = object  # type: ignore[misc]
+    Context = Any  # type: ignore[misc]
 
-    def register_event(_name: str) -> Any:  # type: ignore[misc]  # noqa: N816
+    def register_event(_name: str) -> Any:  # type: ignore[misc]
         return lambda fn: fn
 
 

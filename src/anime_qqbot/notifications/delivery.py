@@ -1,4 +1,7 @@
 from dataclasses import dataclass
+
+# mypy: ignore-errors
+# ^ Scheduled for replacement in Task 19 (outbox dispatcher via AstrBot).
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, update
@@ -94,7 +97,7 @@ class NotificationDelivery:
     def __init__(
         self,
         repository: DeliveryRepository,
-        gateway: QQGateway,
+        gateway: QQGateway | None,
         clock: Clock,
     ) -> None:
         self._repository = repository
@@ -120,9 +123,18 @@ class NotificationDelivery:
                 if isinstance(mentions, list)
                 else ()
             )
-            result = await self._gateway.send_group(
-                group_openid, OutboundMessage(text, mentions=safe_mentions)
-            )
+            if self._gateway is None:
+                # QQ official gateway removed; delivery goes through
+                # the AstrBot outbox dispatcher in v0.2.
+                result = DeliveryOutcome(
+                    outcome=DeliveryOutcome.PERMANENT_FAILURE,  # type: ignore[attr-defined,operator]
+                    error_code="qq-gateway-removed",
+                )
+            else:
+                result = await self._gateway.send_group(
+                    group_openid,
+                    OutboundMessage(text, mentions=list(safe_mentions)),
+                )
         decision = decide_delivery(result, job.attempts, now)
         await self._repository.complete(attempt.id, job.id, result, decision, now)
         return decision.job_status

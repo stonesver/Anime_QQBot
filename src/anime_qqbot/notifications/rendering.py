@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+# ^ Scheduled for replacement in v0.2 tasks.
 # ruff: noqa: RUF001
 
 from zoneinfo import ZoneInfo

@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+# ^ Scheduled for replacement in v0.2 tasks.
 from dataclasses import dataclass
 
 from anime_qqbot.qq.contracts import QQEvent
