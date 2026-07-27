@@ -1,47 +1,57 @@
-# anime-qqbot
+# anime-qqbot v0.2.0
 
-一个使用 QQ 官方机器人开放平台、Bangumi API 和 bangumi-data 的小范围群聊追番服务。
+AstrBot 多源群聊追番服务：通过 NapCat (OneBot 11) + AstrBot 接入普通 QQ 小号，
+提供群内固定命令查询、订阅追番、预计放送提醒和 Mikan 资源更新通知。
 
-当前状态：v0.1.0 候选版本，代码与离线验收已完成，正式发布前需要 QQ 官方沙箱凭据做线上验收。
+当前状态：v0.2.0 自动验收通过，待真实测试群 canary。
 
-## 首期范围
+## 核心功能
 
-- 今日、本周、季度番剧查询；
-- 搜索、详情和下一次预计放送；
-- 群内用户订阅与 `@` 提醒；
-- 每群独立的每日/每周计划；
-- PostgreSQL 持久化；
-- Docker Compose 部署。
+- 今日本周季度查询、搜索、详情、下一次预计放送；
+- 群内用户通过内部 Anime ID 订阅与取消；
+- Bangumi + AniList 双源数据融合与字段投影；
+- 精确时刻预计放送提醒 + `@` 订阅用户；
+- Mikan RSS 资源发布聚合、字幕组/语言/分辨率筛选；
+- 通知 Outbox（租约、重试、过期清理）；
+- PostgreSQL 持久化，Docker Compose 五单元部署。
 
-首期不包含个人 QQ/OneBot、Web 管理后台、Bangumi 账号绑定、Agent/MCP 或资源实际上线检测。
+## 架构
+
+```
+QQ小号 → NapCat/OneBot 11 → AstrBot → Anime Plugin → Anime Core → PostgreSQL
+                                  ↑                        ↑
+                                  └─ Worker (同步/规划) ───┘
+                                        Bangumi / AniList / Mikan
+```
+
+首版不包含 QQ 官方机器人、Web 管理后台、大模型依赖或自动下载。
 
 ## 文档
 
-- [服务器部署](docs/deployment.md)
-- [运维、备份与恢复](docs/operations.md)
-- [设计规格](docs/superpowers/specs/2026-07-15-anime-qq-bot-design.md)
-- [实施计划](docs/superpowers/plans/2026-07-15-anime-qq-bot-implementation-plan.md)
+- [部署指南](docs/deployment.md)
+- [运维手册](docs/operations.md)
+- [v0.2.0 验收报告](docs/acceptance/v0.2.0.md)
+- [多源追番系统设计](docs/superpowers/specs/2026-07-26-astrbot-multisource-anime-tracking-design.md)
+- [实施计划](docs/superpowers/plans/2026-07-27-astrbot-multisource-anime-tracking-implementation-plan.md)
+- [领域词汇](CONTEXT.md)
 
-## 本地开发前置条件
-
-- Python 3.12
-- [uv](https://docs.astral.sh/uv/)
-- Docker Engine 与 Docker Compose
-
-安装依赖后运行：
+## 本地开发
 
 ```bash
+# Python 3.12 + Docker
 uv sync --frozen
-make check-fast
+.venv/bin/pytest tests/unit
+.venv/bin/ruff check .
+.venv/bin/mypy src
 ```
 
 ## Docker 快速启动
 
 ```bash
 cp .env.example .env
-# 填写 POSTGRES_PASSWORD、BANGUMI_USER_AGENT、QQ_APP_ID、QQ_APP_SECRET
+# 填写 POSTGRES_PASSWORD 和 ONEBOT_TOKEN
 docker compose up -d --build
 docker compose ps
+# QQ 登录: http://127.0.0.1:8082 (NapCat)
+# AstrBot: http://127.0.0.1:6180
 ```
-
-完整的 QQ 控制台步骤、更新、故障排查和数据恢复方法见部署与运维文档。
