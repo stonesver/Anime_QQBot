@@ -29,14 +29,15 @@ def test_migration_upgrade_downgrade_round_trip() -> None:
     command.downgrade(config, "base")
     command.upgrade(config, "head")
     assert {
-        "groups",
-        "group_members",
-        "admin_identities",
-        "processed_events",
-        "worker_heartbeats",
+        "airing_occurrences",
+        "external_entries",
+        "animes",
+        "anime_source_links",
+        "chat_groups",
+        "group_memberships",
     }.issubset(asyncio.run(table_names()))
 
     command.downgrade(config, "base")
-    assert "groups" not in asyncio.run(table_names())
+    assert "animes" not in asyncio.run(table_names())
 
     command.upgrade(config, "head")

@@ -108,9 +108,7 @@ async def test_graphql_errors_classify_as_invalid() -> None:
 
 @respx.mock
 async def test_invalid_json_classifies_as_invalid() -> None:
-    respx.post("https://graphql.anilist.co").mock(
-        return_value=httpx.Response(200, text="not json")
-    )
+    respx.post("https://graphql.anilist.co").mock(return_value=httpx.Response(200, text="not json"))
     async with AniListClient() as client:
         with pytest.raises(ProviderError) as caught:
             await client.fetch_media(21)
