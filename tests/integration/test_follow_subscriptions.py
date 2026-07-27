@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -49,9 +48,14 @@ async def _seed_group_and_anime(session_factory) -> tuple[object, object]:
 
     async with session_factory() as sess:
         g = ChatGroup(
-            id=uuid4(), platform="qq", external_group_id="123",
-            unified_msg_origin="umo", timezone="Asia/Shanghai", enabled=True,
-            created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+            id=uuid4(),
+            platform="qq",
+            external_group_id="123",
+            unified_msg_origin="umo",
+            timezone="Asia/Shanghai",
+            enabled=True,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
         sess.add(g)
         await sess.commit()
@@ -104,8 +108,11 @@ async def test_outbox_enqueue_and_claim(session_factory) -> None:
 
     now = datetime.now(UTC)
     await outbox.enqueue(
-        chat_group_id=g.id, job_type="airing", business_key="k1",
-        payload={"x": 1}, available_at=now,
+        chat_group_id=g.id,
+        job_type="airing",
+        business_key="k1",
+        payload={"x": 1},
+        available_at=now,
         expires_at=datetime(2027, 7, 20, tzinfo=UTC),
     )
 
@@ -122,12 +129,20 @@ async def test_outbox_dedup_key_unique(session_factory) -> None:
     dt = datetime.now(UTC)
     exp = datetime(2027, 7, 27, tzinfo=UTC)
     j1 = await outbox.enqueue(
-        chat_group_id=g.id, job_type="airing", business_key="k1",
-        payload={}, available_at=dt, expires_at=exp,
+        chat_group_id=g.id,
+        job_type="airing",
+        business_key="k1",
+        payload={},
+        available_at=dt,
+        expires_at=exp,
     )
     j2 = await outbox.enqueue(
-        chat_group_id=g.id, job_type="airing", business_key="k1",
-        payload={"dup": 2}, available_at=dt, expires_at=exp,
+        chat_group_id=g.id,
+        job_type="airing",
+        business_key="k1",
+        payload={"dup": 2},
+        available_at=dt,
+        expires_at=exp,
     )
     assert j1.id == j2.id
 
@@ -139,8 +154,12 @@ async def test_claim_skips_expired(session_factory) -> None:
 
     past = datetime(2025, 1, 1, tzinfo=UTC)
     await outbox.enqueue(
-        chat_group_id=g.id, job_type="airing", business_key="old",
-        payload={}, available_at=past, expires_at=past,
+        chat_group_id=g.id,
+        job_type="airing",
+        business_key="old",
+        payload={},
+        available_at=past,
+        expires_at=past,
     )
     claimed = await outbox.claim("w", limit=5)
     assert claimed == []

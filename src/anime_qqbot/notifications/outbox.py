@@ -70,10 +70,15 @@ class OutboxRepository:
                 .on_conflict_do_nothing(
                     index_elements=["chat_group_id", "job_type", "business_key"],
                 )
-                .returning(NotificationJob.id, NotificationJob.chat_group_id,
-                           NotificationJob.job_type, NotificationJob.payload,
-                           NotificationJob.status, NotificationJob.available_at,
-                           NotificationJob.expires_at)
+                .returning(
+                    NotificationJob.id,
+                    NotificationJob.chat_group_id,
+                    NotificationJob.job_type,
+                    NotificationJob.payload,
+                    NotificationJob.status,
+                    NotificationJob.available_at,
+                    NotificationJob.expires_at,
+                )
             )
             result = await session.execute(stmt)
             row = result.one_or_none()
@@ -84,8 +89,12 @@ class OutboxRepository:
             existing = await self._find_by_key(session, chat_group_id, job_type, business_key)
             assert existing is not None
             return OutboxJob(
-                existing.id, existing.chat_group_id, existing.job_type,
-                existing.payload, existing.status, existing.available_at,
+                existing.id,
+                existing.chat_group_id,
+                existing.job_type,
+                existing.payload,
+                existing.status,
+                existing.available_at,
                 existing.expires_at,
             )
 
@@ -114,8 +123,15 @@ class OutboxRepository:
                 row.updated_at = now
             await session.commit()
             return [
-                OutboxJob(r.id, r.chat_group_id, r.job_type, r.payload,
-                          r.status, r.available_at, r.expires_at)
+                OutboxJob(
+                    r.id,
+                    r.chat_group_id,
+                    r.job_type,
+                    r.payload,
+                    r.status,
+                    r.available_at,
+                    r.expires_at,
+                )
                 for r in rows
             ]
 

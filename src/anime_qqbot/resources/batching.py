@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-
 
 BATCH_WINDOW_MINUTES: int = 10
 
@@ -45,7 +44,7 @@ def format_batch_message(batch: BatchResult) -> str:
     lines = [f"[资源发布] {title} 第{batch.episode_label}集"]
     for i, rel in enumerate(batch.releases[:5]):
         if hasattr(rel, "title"):
-            lines.append(f"  {i+1}. {rel.title}")
+            lines.append(f"  {i + 1}. {rel.title}")
     remaining = len(batch.releases) - 5
     if remaining > 0:
         lines.append(f"  ...还有 {remaining} 条")

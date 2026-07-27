@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def test_all_fixed_commands_in_parser() -> None:
-    from anime_qqbot.application import parse_fixed_command, Intent
+    from anime_qqbot.application import Intent, parse_fixed_command
 
     commands = [
         "/番剧 今天",

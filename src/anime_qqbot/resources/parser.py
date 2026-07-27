@@ -55,7 +55,7 @@ def parse_release_title(raw_title: str) -> ParsedRelease:
         if len(text) <= 32 and not text.isdigit():
             groups.append(text)
         else:
-            clean.append(raw_title[pos:m.end()])
+            clean.append(raw_title[pos : m.end()])
         pos = m.end()
     remaining = raw_title[pos:]
     if remaining:
@@ -87,7 +87,9 @@ def parse_release_title(raw_title: str) -> ParsedRelease:
     language: str | None = None
     if lang_m:
         v = lang_m.group(1).lower()
-        language = "chs" if v in {"简", "chs", "sc"} else "cht" if v in {"繁", "cht", "tc"} else None
+        language = (
+            "chs" if v in {"简", "chs", "sc"} else "cht" if v in {"繁", "cht", "tc"} else None
+        )
 
     warnings: list[str] = []
     if episode_label is None:
@@ -104,4 +106,4 @@ def parse_release_title(raw_title: str) -> ParsedRelease:
     )
 
 
-__all__ = ["ParsedRelease", "PARSER_VERSION", "parse_release_title"]
+__all__ = ["PARSER_VERSION", "ParsedRelease", "parse_release_title"]

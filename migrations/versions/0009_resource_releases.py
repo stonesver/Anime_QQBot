@@ -39,7 +39,9 @@ def upgrade() -> None:
         sa.Column("window_started_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("window_closed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("status", sa.String(16), nullable=False, server_default="open"),
-        sa.UniqueConstraint("anime_id", "episode_label", "window_started_at", name="uq_release_batches_key"),
+        sa.UniqueConstraint(
+            "anime_id", "episode_label", "window_started_at", name="uq_release_batches_key"
+        ),
     )
 
 

@@ -1,3 +1,5 @@
+from typing import Any
+
 """v0.2 follow subscription store (Task 17)."""
 
 from __future__ import annotations
@@ -71,12 +73,17 @@ class FollowRepository:
             existing = await self._find(session, chat_group_id, external_user_id, anime_id)
             assert existing is not None
             return FollowRow(
-                existing.id, existing.chat_group_id or UUID(int=0), existing.external_user_id or "",
+                existing.id,
+                existing.chat_group_id or UUID(int=0),
+                existing.external_user_id or "",
                 existing.anime_id or UUID(int=0),
-                existing.notify_airing, existing.notify_resource,
+                existing.notify_airing,
+                existing.notify_resource,
             )
 
-    async def unsubscribe(self, *, chat_group_id: UUID, external_user_id: str, anime_id: UUID) -> None:
+    async def unsubscribe(
+        self, *, chat_group_id: UUID, external_user_id: str, anime_id: UUID
+    ) -> None:
         async with self._session_factory() as session:
             row = await self._find(session, chat_group_id, external_user_id, anime_id)
             if row is not None:
@@ -95,8 +102,14 @@ class FollowRepository:
             )
             rows = (await session.execute(stmt)).scalars().all()
             return [
-                FollowRow(r.id, r.chat_group_id, r.external_user_id, r.anime_id,
-                          r.notify_airing, r.notify_resource)
+                FollowRow(
+                    r.id,
+                    r.chat_group_id,
+                    r.external_user_id,
+                    r.anime_id,
+                    r.notify_airing,
+                    r.notify_resource,
+                )
                 for r in rows
             ]
 
@@ -112,8 +125,14 @@ class FollowRepository:
             )
             rows = (await session.execute(stmt)).scalars().all()
             return [
-                FollowRow(r.id, r.chat_group_id, r.external_user_id, r.anime_id,
-                          r.notify_airing, r.notify_resource)
+                FollowRow(
+                    r.id,
+                    r.chat_group_id,
+                    r.external_user_id,
+                    r.anime_id,
+                    r.notify_airing,
+                    r.notify_resource,
+                )
                 for r in rows
             ]
 

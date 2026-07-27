@@ -42,7 +42,12 @@ def downgrade() -> None:
     op.create_table(
         "airing_schedules",
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
-        sa.Column("subject_id", sa.BigInteger(), sa.ForeignKey("anime_subjects.subject_id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "subject_id",
+            sa.BigInteger(),
+            sa.ForeignKey("anime_subjects.subject_id", ondelete="CASCADE"),
+            nullable=False,
+        ),
         sa.Column("occurrence_key", sa.String(192), nullable=False),
         sa.Column("air_date", sa.Date(), nullable=False),
         sa.Column("air_at", sa.DateTime(timezone=True), nullable=True),

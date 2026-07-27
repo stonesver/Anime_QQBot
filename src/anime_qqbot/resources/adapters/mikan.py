@@ -8,12 +8,9 @@ and Mikan page link. No private tokens, no magnet links.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any
-from urllib.parse import urlparse
-from xml.etree.ElementTree import Element, parse
-from io import StringIO
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from xml.etree.ElementTree import parse
 
 import httpx
 
@@ -68,7 +65,9 @@ class MikanClient:
         try:
             return self._parse_xml(resp.text)
         except Exception as exc:
-            raise ProviderError(ProviderErrorKind.INVALID_RESPONSE, f"mikan xml parse: {exc}") from exc
+            raise ProviderError(
+                ProviderErrorKind.INVALID_RESPONSE, f"mikan xml parse: {exc}"
+            ) from exc
 
     @staticmethod
     def _parse_xml(content: str) -> list[MikanItem]:
@@ -94,22 +93,23 @@ class MikanClient:
             if not guid or not title_str:
                 continue
             pub = _parse_rfc2822(pub_el.text or "")
-            items.append(MikanItem(
-                guid=guid,
-                title=title_str,
-                pub_date=pub,
-                page_url=link_str,
-            ))
+            items.append(
+                MikanItem(
+                    guid=guid,
+                    title=title_str,
+                    pub_date=pub,
+                    page_url=link_str,
+                )
+            )
         return items
 
 
 def _parse_rfc2822(text: str) -> datetime:
     import email.utils
-    from datetime import timezone
 
     tt = email.utils.parsedate_to_datetime(text)
     if tt.tzinfo is None:
-        tt = tt.replace(tzinfo=timezone.utc)
+        tt = tt.replace(tzinfo=UTC)
     return tt
 
 
