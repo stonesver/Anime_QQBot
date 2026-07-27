@@ -32,7 +32,7 @@ class CatalogSyncService:
     def __init__(
         self,
         bangumi: BangumiProvider,
-        bangumi_data: AiringProvider,
+        bangumi_data: AiringProvider | None,
         repository: SyncRepository,
         clock: Clock,
     ) -> None:
@@ -60,6 +60,8 @@ class CatalogSyncService:
         return True
 
     async def _sync_bangumi_data(self, season: Season) -> bool:
+        if self._bangumi_data is None:
+            return True  # bangumi-data removed in v0.2.0
         now = self._clock.now()
         starts_on, _ = season.date_range
         try:

@@ -11,7 +11,6 @@ from alembic import command
 from alembic.config import Config
 
 from anime_qqbot.catalog.adapters.bangumi import BangumiClient
-from anime_qqbot.catalog.adapters.bangumi_data import BangumiDataClient
 from anime_qqbot.catalog.models import Season
 from anime_qqbot.catalog.repository import CatalogRepository
 from anime_qqbot.catalog.sync import CatalogSyncService
@@ -52,7 +51,7 @@ async def run_worker() -> None:
                 clock=clock,
                 client=client,
             ),
-            BangumiDataClient(client=client),
+            None,  # bangumi-data removed in v0.2.0
             repository,
             clock,
         )
