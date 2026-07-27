@@ -46,7 +46,7 @@ async def _reset(engine) -> None:
         await conn.exec_driver_sql(
             "TRUNCATE TABLE source_snapshots, anime_source_links, "
             "anime_titles, airing_occurrences, external_entries, animes, "
-            "source_sync_states RESTART IDENTITY CASCADE"
+            "source_sync_states, anime_subjects, airing_schedules RESTART IDENTITY CASCADE"
         )
 
 

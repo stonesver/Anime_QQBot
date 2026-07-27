@@ -11,9 +11,15 @@ class ProviderErrorKind(StrEnum):
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, kind: ProviderErrorKind, message: str) -> None:
+    def __init__(
+        self,
+        kind: ProviderErrorKind,
+        message: str,
+        retry_after: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.kind = kind
+        self.retry_after = retry_after
 
 
 def raise_for_provider_response(response: httpx.Response) -> None:

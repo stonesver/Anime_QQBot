@@ -1,0 +1,19 @@
+{
+  "data": {
+    "Page": {
+      "media": [
+        {
+          "id": 21,
+          "title": {"romaji": "Natsu Monogatari", "english": "Summer Tale", "native": "夏物語"},
+          "type": "ANIME",
+          "format": "TV",
+          "episodes": 12,
+          "startDate": {"year": 2026, "month": 7, "day": 1},
+          "isAdult": false,
+          "siteUrl": "https://anilist.co/anime/21",
+          "coverImage": {"extraLarge": "https://img.anili.st/media/21.jpg"}
+        }
+      ]
+    }
+  }
+}
