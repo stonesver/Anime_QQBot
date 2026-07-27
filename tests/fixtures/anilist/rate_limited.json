@@ -1,0 +1,5 @@
+{
+  "errors": [
+    {"message": "Too Many Requests", "status": 429, "extensions": {"retryAfter": 30}}
+  ]
+}

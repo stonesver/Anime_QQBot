@@ -1,0 +1,20 @@
+{
+  "data": {
+    "Page": {
+      "airingSchedules": [
+        {
+          "id": 9001,
+          "episode": 1,
+          "airingAt": 1752456000,
+          "media": {"id": 21, "title": {"romaji": "Natsu Monogatari"}}
+        },
+        {
+          "id": 9002,
+          "episode": 2,
+          "airingAt": 1753060800,
+          "media": {"id": 21, "title": {"romaji": "Natsu Monogatari"}}
+        }
+      ]
+    }
+  }
+}

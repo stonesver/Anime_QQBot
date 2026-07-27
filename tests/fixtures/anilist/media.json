@@ -1,0 +1,30 @@
+{
+  "data": {
+    "Media": {
+      "id": 21,
+      "idMal": 100,
+      "title": {
+        "romaji": "Natsu Monogatari",
+        "english": "Summer Tale",
+        "native": "夏物語"
+      },
+      "description": "<i>Summer story.</i>",
+      "season": "SUMMER",
+      "seasonYear": 2026,
+      "type": "ANIME",
+      "format": "TV",
+      "episodes": 12,
+      "duration": 24,
+      "startDate": {"year": 2026, "month": 7, "day": 1},
+      "endDate": {"year": 2026, "month": 9, "day": 30},
+      "averageScore": 78,
+      "popularity": 12345,
+      "genres": ["Slice of Life"],
+      "isAdult": false,
+      "siteUrl": "https://anilist.co/anime/21",
+      "coverImage": {"extraLarge": "https://img.anili.st/media/21.jpg"},
+      "studios": {"nodes": [{"name": "Studio X"}]},
+      "externalLinks": [{"url": "https://bgm.tv/subject/100", "site": "Bangumi"}]
+    }
+  }
+}
