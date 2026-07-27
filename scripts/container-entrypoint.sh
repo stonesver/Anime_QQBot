@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
 
-role="${1:-bot}"
+role="${1:-worker}"
 shift || true
 
 case "$role" in
-  migrate|bot|worker)
+  migrate|worker)
     exec python -m anime_qqbot.entrypoints.cli "$role" "$@"
     ;;
   *)

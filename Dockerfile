@@ -20,6 +20,6 @@ COPY src ./src
 COPY scripts/container-entrypoint.sh /usr/local/bin/anime-qqbot
 RUN chmod 0755 /usr/local/bin/anime-qqbot && chown -R animebot:animebot /app
 USER animebot
-EXPOSE 8080 8081
+EXPOSE 8081
 ENTRYPOINT ["anime-qqbot"]
-CMD ["bot"]
+CMD ["worker"]
