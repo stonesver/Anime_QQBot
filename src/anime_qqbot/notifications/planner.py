@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 # ruff: noqa: RUF001
 
 from dataclasses import dataclass

@@ -20,14 +20,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 from anime_qqbot.persistence.base import Base
 
 
-class GroupSchedule(Base):
-    __tablename__ = "group_schedules"
+class LegacyGroupSchedule(Base):
+    __tablename__ = "_legacy_group_schedules"
     __table_args__ = (
-        UniqueConstraint("group_id", "schedule_type", name="uq_group_schedules_group_type"),
-        Index("ix_group_schedules_due", "enabled", "next_run_at"),
+        UniqueConstraint("group_id", "schedule_type", name="uq_legacy_group_schedules_group_type"),
+        Index("ix_legacy_group_schedules_due", "enabled", "next_run_at"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
+    group_id: Mapped[int] = mapped_column(ForeignKey("_legacy_groups.id", ondelete="CASCADE"))
     schedule_type: Mapped[str] = mapped_column(String(16))
     timezone: Mapped[str] = mapped_column(String(64))
     local_time: Mapped[time] = mapped_column(Time)
@@ -39,9 +39,9 @@ class GroupSchedule(Base):
     )
 
 
-class NotificationJob(Base):
-    __tablename__ = "notification_jobs"
-    __table_args__ = (Index("ix_notification_jobs_claim", "status", "available_at"),)
+class LegacyNotificationJob(Base):
+    __tablename__ = "_legacy_notification_jobs"
+    __table_args__ = (Index("ix_legacy_notification_jobs_claim", "status", "available_at"),)
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id", ondelete="CASCADE"))
     business_key: Mapped[str] = mapped_column(String(255), unique=True)
@@ -56,13 +56,15 @@ class NotificationJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
-class DeliveryAttempt(Base):
-    __tablename__ = "delivery_attempts"
+class LegacyDeliveryAttempt(Base):
+    __tablename__ = "_legacy_delivery_attempts"
     __table_args__ = (
-        UniqueConstraint("job_id", "attempt_no", name="uq_delivery_attempts_job_attempt"),
+        UniqueConstraint("job_id", "attempt_no", name="uq_legacy_delivery_attempts_job_attempt"),
     )
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    job_id: Mapped[int] = mapped_column(ForeignKey("notification_jobs.id", ondelete="CASCADE"))
+    job_id: Mapped[int] = mapped_column(
+        ForeignKey("_legacy_notification_jobs.id", ondelete="CASCADE")
+    )
     attempt_no: Mapped[int] = mapped_column(Integer)
     status: Mapped[str] = mapped_column(String(24), default="started")
     platform_message_id: Mapped[str | None] = mapped_column(String(192))

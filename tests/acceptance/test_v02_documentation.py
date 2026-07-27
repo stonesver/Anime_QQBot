@@ -32,9 +32,15 @@ def test_no_official_qq_paths_in_docs() -> None:
         text = path.read_text()
         # Historical acceptance reports and design docs may reference old
         # QQ runtime; skip them.
-        if any(marker in str(path) for marker in (
-            "v0.1", "2026-07-15", "2026-07-16", "2026-07-17",
-        )):
+        if any(
+            marker in str(path)
+            for marker in (
+                "v0.1",
+                "2026-07-15",
+                "2026-07-16",
+                "2026-07-17",
+            )
+        ):
             continue
         if "已移除" in text or "历史" in text or "superseded" in text.lower():
             continue

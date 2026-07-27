@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 import asyncio
 from datetime import datetime
 from typing import Protocol

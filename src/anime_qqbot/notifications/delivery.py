@@ -8,7 +8,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.clock import Clock
-from anime_qqbot.persistence.models.notifications import DeliveryAttempt, NotificationJob
+from anime_qqbot.persistence.models.notifications import (
+    LegacyDeliveryAttempt as DeliveryAttempt,
+)
+from anime_qqbot.persistence.models.notifications import (
+    LegacyNotificationJob as NotificationJob,
+)
 from anime_qqbot.qq.contracts import DeliveryOutcome, DeliveryResult, OutboundMessage
 from anime_qqbot.qq.gateway import QQGateway
 

@@ -46,7 +46,7 @@ async def _reset(engine) -> None:
         await conn.exec_driver_sql(
             "TRUNCATE TABLE source_snapshots, anime_source_links, "
             "anime_titles, airing_occurrences, external_entries, animes, "
-            "source_sync_states, anime_subjects, airing_schedules RESTART IDENTITY CASCADE"
+            "source_sync_states RESTART IDENTITY CASCADE"
         )
 
 
@@ -166,20 +166,15 @@ async def test_snapshot_versions_increment(session_factory) -> None:
     assert latest.version == 2
 
 
-async def test_old_anime_subjects_table_is_not_touched(session_factory) -> None:
-    """First sync must not write to v0.1 cache tables; later read-only
-    fallbacks depend on them staying intact."""
+async def test_old_anime_subjects_table_is_not_needed(session_factory) -> None:
+    """v0.1 cache tables have been dropped (0010); verify the new
+    catalog works independently."""
 
     bangumi = _StubBangumi(_detail())
     write = CatalogWriteRepository(session_factory)
     sync = BangumiCatalogSync(bangumi, write)
 
-    await sync.sync_subject(42)
+    result = await sync.sync_subject(42)
 
-    engine = _engine()
-    async with engine.connect() as conn:
-        from sqlalchemy import text
-
-        rows = (await conn.execute(text("SELECT COUNT(*) FROM anime_subjects"))).scalar()
-    await engine.dispose()
-    assert rows == 0
+    assert result.is_new_anime is True
+    # The new catalog is fully self-contained.
