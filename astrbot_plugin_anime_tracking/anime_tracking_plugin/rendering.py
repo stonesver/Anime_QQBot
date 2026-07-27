@@ -30,4 +30,11 @@ async def render_reply(reply: Reply, event: Any) -> Any:
     return text  # tests assert on the returned plain text
 
 
-__all__ = ["render_reply"]
+def render_airing_notification(payload: dict) -> str:
+    """Render an airing notification into a plain text summary."""
+    title = payload.get("display_title", "未知")
+    episode = payload.get("episode_label", "?")
+    return f"[预计放送] {title} 第{episode}集 即将播出"
+
+
+__all__ = ["render_airing_notification", "render_reply"]
