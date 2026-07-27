@@ -16,7 +16,7 @@ fetched_at timestamp, so callers can show data freshness.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 
 @dataclass(frozen=True)
@@ -60,19 +60,19 @@ def project_anime(
             return ProjectionField(
                 value=bangumi_value,
                 source="bangumi",
-                fetched_at=bangumi_fetched_at or datetime.now(),
+                fetched_at=bangumi_fetched_at or datetime.now(tz=UTC),
             )
         if isinstance(anilist_value, str) and anilist_value:
             return ProjectionField(
                 value=anilist_value,
                 source="anilist",
-                fetched_at=anilist_fetched_at or datetime.now(),
+                fetched_at=anilist_fetched_at or datetime.now(tz=UTC),
             )
         if isinstance(cn_value, str) and cn_value:
             return ProjectionField(
                 value=cn_value,
                 source="bangumi",
-                fetched_at=bangumi_fetched_at or datetime.now(),
+                fetched_at=bangumi_fetched_at or datetime.now(tz=UTC),
             )
         return None
 
@@ -93,13 +93,13 @@ def project_anime(
         title_jp_value = ProjectionField(
             value=title_jp_a,
             source="anilist",
-            fetched_at=anilist_fetched_at or datetime.now(),
+            fetched_at=anilist_fetched_at or datetime.now(tz=UTC),
         )
     elif isinstance(title_jp_b, str) and title_jp_b:
         title_jp_value = ProjectionField(
             value=title_jp_b,
             source="bangumi",
-            fetched_at=bangumi_fetched_at or datetime.now(),
+            fetched_at=bangumi_fetched_at or datetime.now(tz=UTC),
         )
 
     nsfw_blocked = False
@@ -114,13 +114,13 @@ def project_anime(
         air_date_value = ProjectionField(
             value=anilist_snapshot["air_date"],
             source="anilist",
-            fetched_at=anilist_fetched_at or datetime.now(),
+            fetched_at=anilist_fetched_at or datetime.now(tz=UTC),
         )
     elif bangumi_snapshot and bangumi_snapshot.get("air_date"):
         air_date_value = ProjectionField(
             value=bangumi_snapshot["air_date"],
             source="bangumi",
-            fetched_at=bangumi_fetched_at or datetime.now(),
+            fetched_at=bangumi_fetched_at or datetime.now(tz=UTC),
         )
 
     summary_value = _prefer(
@@ -138,7 +138,7 @@ def project_anime(
             image_value = ProjectionField(
                 value=snapshot["image_url"],
                 source=source,
-                fetched_at=fetched_at or datetime.now(),
+                fetched_at=fetched_at or datetime.now(tz=UTC),
             )
             break
 
@@ -147,7 +147,7 @@ def project_anime(
         score_cn = ProjectionField(
             value=bangumi_snapshot["score"],
             source="bangumi",
-            fetched_at=bangumi_fetched_at or datetime.now(),
+            fetched_at=bangumi_fetched_at or datetime.now(tz=UTC),
         )
 
     score_global = None
@@ -155,7 +155,7 @@ def project_anime(
         score_global = ProjectionField(
             value=anilist_snapshot["score"],
             source="anilist",
-            fetched_at=anilist_fetched_at or datetime.now(),
+            fetched_at=anilist_fetched_at or datetime.now(tz=UTC),
         )
 
     return AnimeProjection(

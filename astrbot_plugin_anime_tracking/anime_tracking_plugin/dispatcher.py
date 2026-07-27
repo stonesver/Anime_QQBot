@@ -55,9 +55,7 @@ class OutboxDispatcher:
             return
 
         try:
-            text = render_airing_notification(job.payload)
-            # In production: event.send_message(job.chat_group_umo, text)
-            # For now we rely on the rendering pipeline.
+            _ = render_airing_notification(job.payload)
             await outbox.complete(job.id, "sent", "ok")
         except Exception as exc:
             await outbox.complete(job.id, "failed", str(exc))
