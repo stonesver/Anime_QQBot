@@ -12,6 +12,7 @@ tables and the chat_groups / group_memberships tables.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
@@ -20,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.application.context import ChatContext
+from anime_qqbot.application.enrichment import BackgroundEnrichmentQueue
 from anime_qqbot.application.intents import Intent, IntentKind
 from anime_qqbot.catalog.repository_v2 import (
     AnimeRow,
@@ -46,6 +48,8 @@ from anime_qqbot.persistence.models.subscriptions_v2 import (
 from anime_qqbot.subscriptions.repository_v2 import (
     FollowRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -230,7 +234,24 @@ async def search_anime(
         return QueryResult(kind=IntentKind.SEARCH, candidates=matches)
     if len(matches) == 1:
         return QueryResult(kind=IntentKind.SEARCH, detail=matches[0])
-    return QueryResult(kind=IntentKind.SEARCH)
+    queued = False
+    try:
+        await BackgroundEnrichmentQueue(sessions).request_search(
+            query,
+            now=_now_utc(),
+        )
+        queued = True
+    except Exception as exc:
+        logger.warning(
+            "application.enrichment.search_enqueue_failed",
+            extra={"error": str(exc)},
+        )
+    return QueryResult(
+        kind=IntentKind.SEARCH,
+        message=(
+            "暂未收录，已提交后台补充，请稍后重新搜索。" if queued else "暂未收录，请稍后重新搜索。"
+        ),
+    )
 
 
 async def detail_for(
@@ -361,6 +382,16 @@ async def subscribe(
         external_user_id=ctx.user_id,
         anime_id=anime.id,
     )
+    try:
+        await BackgroundEnrichmentQueue(sessions).request_subscription(
+            anime.id,
+            now=_now_utc(),
+        )
+    except Exception as exc:
+        logger.warning(
+            "application.enrichment.subscription_enqueue_failed",
+            extra={"anime_id": str(anime.id), "error": str(exc)},
+        )
     return SubscribeResult(success=True, anime=anime, detail_message="已订阅")
 
 

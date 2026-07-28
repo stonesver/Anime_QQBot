@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from anime_qqbot.operations.repository import OperatorJobRepository
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import (
     EventAdapter,
     Reply,
@@ -216,7 +217,8 @@ async def async_engine() -> AsyncEngine:
     engine = _engine()
     async with engine.begin() as conn:
         await conn.exec_driver_sql(
-            "TRUNCATE TABLE delivery_attempts, notification_jobs, "
+            "TRUNCATE TABLE admin_audit_events, operator_jobs, delivery_attempts, "
+            "notification_jobs, "
             "subscription_resource_filters, follow_subscriptions, "
             "source_snapshots, anime_source_links, anime_titles, "
             "airing_occurrences, external_entries, animes, "
@@ -263,6 +265,33 @@ async def test_real_search_finds_anime(async_engine: AsyncEngine) -> None:
     )
     assert reply.kind == "text"
     assert "夏日物语" in reply.blocks[0].text
+    assert await OperatorJobRepository(factory).list_recent() == []
+
+
+@pytest.mark.asyncio
+async def test_real_search_miss_enqueues_background_catalog_request(
+    async_engine: AsyncEngine,
+) -> None:
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="1",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin="umo:1",
+        content="/番剧 搜索 尚未收录的番剧",
+    )
+
+    assert "后台补充" in reply.blocks[0].text
+    jobs = await OperatorJobRepository(factory).list_recent()
+    assert len(jobs) == 1
+    assert jobs[0].job_type == "sync_catalog"
+    assert jobs[0].parameters == {
+        "trigger": "search_miss",
+        "query": "尚未收录的番剧",
+    }
 
 
 @pytest.mark.asyncio
@@ -349,6 +378,13 @@ async def test_real_subscribe_is_idempotent(async_engine: AsyncEngine) -> None:
         )
         assert reply.kind == "text"
         assert "已订阅" in reply.blocks[0].text
+    jobs = await OperatorJobRepository(factory).list_recent()
+    assert len(jobs) == 1
+    assert jobs[0].job_type == "sync_catalog"
+    assert jobs[0].parameters == {
+        "trigger": "subscription",
+        "anime_id": str(SAMPLE_ANIME_ID),
+    }
 
 
 @pytest.mark.asyncio

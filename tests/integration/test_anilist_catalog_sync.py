@@ -294,9 +294,9 @@ async def test_discovery_confirms_unique_exact_native_title_and_air_date(
         clock=FrozenClock(now),
     )
 
-    result = await discovery.run_once(limit=10)
+    linked = await discovery.enrich_anime(anime_id)
 
-    assert result.links_confirmed == 1
+    assert linked is True
     async with session_factory() as session:
         entry = (
             await session.execute(

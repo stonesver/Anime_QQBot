@@ -178,7 +178,7 @@ async def _query_to_reply(result: QueryResult, *, ctx: ChatContext) -> Reply:
             )
         if result.candidates:
             return Reply.from_candidates(result.candidates)
-        return Reply.from_text("未找到匹配的番剧，请使用 /番剧 搜索 <关键词>")
+        return Reply.from_text(result.message or "未找到匹配的番剧，请使用 /番剧 搜索 <关键词>")
     if result.kind == IntentKind.DETAIL:
         if result.blocked:
             return Reply.from_error("该番剧被屏蔽，不予展示")

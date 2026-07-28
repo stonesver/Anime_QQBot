@@ -29,6 +29,9 @@ v0.3.0 已完成：
 - 只有 Mikan 页面公开的 Bangumi ID 与本地 confirmed Bangumi ID 一致时，才自动建立
   confirmed Mikan 映射；
 - Worker 首轮同步即可为开启资源提醒的订阅补齐 Mikan 映射并开始轮询；
+- 搜索本地未命中时会提交后台 Bangumi 补充任务，完成后再次搜索即可读取本地结果；
+- 订阅成功后会立即提交目标番剧的 Bangumi/AniList/Mikan 后台补全任务；
+- 群消息请求仍只访问本地数据库，不等待外部数据源；相同搜索或订阅请求十分钟内幂等；
 - 管理面板的数据源状态会记录 AniList/Mikan 最近成功、失败和安全错误摘要；
 - 当前真实接口验证：Mikan 目录、交叉 ID、公开 RSS 与 AniList GraphQL 均可正常返回。
 

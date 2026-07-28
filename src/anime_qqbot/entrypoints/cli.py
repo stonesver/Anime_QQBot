@@ -37,6 +37,7 @@ from anime_qqbot.catalog.adapters.anilist import AniListClient, AniListConfig
 from anime_qqbot.catalog.adapters.bangumi import BangumiClient
 from anime_qqbot.catalog.anilist_mapping import AniListLinkDiscoveryService
 from anime_qqbot.catalog.bangumi_sync import BangumiCatalogSync
+from anime_qqbot.catalog.enrichment import CatalogEnrichmentRunner
 from anime_qqbot.catalog.models import LinkEvidenceType, LinkStatus
 from anime_qqbot.catalog.projection import project_anime
 from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
@@ -286,6 +287,7 @@ async def _discover_mikan_links(
     *,
     now: datetime,
     limit: int,
+    anime_id: UUID | None = None,
 ) -> int:
     """Confirm Mikan mappings backed by Mikan's explicit Bangumi cross-link."""
     catalogue = await client.discover_current_anime()
@@ -296,30 +298,31 @@ async def _discover_mikan_links(
         )
 
     async with sessions() as session:
-        rows = (
-            await session.execute(
-                select(Anime, ExternalEntry)
-                .join(
-                    AnimeSourceLink,
-                    AnimeSourceLink.anime_id == Anime.id,
-                )
-                .join(
-                    ExternalEntry,
-                    ExternalEntry.id == AnimeSourceLink.external_entry_id,
-                )
-                .join(
-                    FollowSubscription,
-                    FollowSubscription.anime_id == Anime.id,
-                )
-                .where(ExternalEntry.provider == SOURCE_BANGUMI)
-                .where(ExternalEntry.disabled.is_(False))
-                .where(AnimeSourceLink.status == LinkStatus.CONFIRMED.value)
-                .where(Anime.disabled.is_(False))
-                .where(Anime.nsfw_flag != "true")
-                .where(FollowSubscription.notify_resource.is_(True))
-                .distinct(Anime.id, ExternalEntry.id)
+        stmt = (
+            select(Anime, ExternalEntry)
+            .join(
+                AnimeSourceLink,
+                AnimeSourceLink.anime_id == Anime.id,
             )
-        ).all()
+            .join(
+                ExternalEntry,
+                ExternalEntry.id == AnimeSourceLink.external_entry_id,
+            )
+            .join(
+                FollowSubscription,
+                FollowSubscription.anime_id == Anime.id,
+            )
+            .where(ExternalEntry.provider == SOURCE_BANGUMI)
+            .where(ExternalEntry.disabled.is_(False))
+            .where(AnimeSourceLink.status == LinkStatus.CONFIRMED.value)
+            .where(Anime.disabled.is_(False))
+            .where(Anime.nsfw_flag != "true")
+            .where(FollowSubscription.notify_resource.is_(True))
+            .distinct(Anime.id, ExternalEntry.id)
+        )
+        if anime_id is not None:
+            stmt = stmt.where(Anime.id == anime_id)
+        rows = (await session.execute(stmt)).all()
         already_linked = set(
             (
                 await session.execute(
@@ -673,7 +676,29 @@ async def run_worker() -> None:
     health = asyncio.create_task(_serve_health(components.sessions))
     next_catalog_sync_at: datetime | None = None
 
-    async def operator_sync_catalog(_parameters: dict[str, object]) -> dict[str, object]:
+    async def enrich_mikan(anime_id: UUID, now: datetime) -> int:
+        return await _discover_mikan_links(
+            components.sessions,
+            components.mikan_client,
+            now=now,
+            limit=1,
+            anime_id=anime_id,
+        )
+
+    enrichment = CatalogEnrichmentRunner(
+        bangumi=components.bangumi_client,
+        bangumi_sync=components.bangumi_sync,
+        anilist=components.anilist_discovery,
+        mikan=enrich_mikan,
+        clock=components.clock,
+        sessions=components.sessions,
+    )
+
+    async def operator_sync_catalog(
+        parameters: dict[str, object],
+    ) -> dict[str, object]:
+        if parameters.get("trigger") in {"search_miss", "subscription"}:
+            return await enrichment.run(parameters)
         discovered = await _discover_calendar_subjects(components, limit=100)
         await _ingest_known_subjects(components, limit=100)
         anilist = await components.anilist_discovery.run_once(limit=20)

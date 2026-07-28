@@ -71,21 +71,7 @@ class AniListLinkDiscoveryService:
             next_cursor = str(anime.id)
             if anime.id in linked:
                 continue
-            title = snapshot.payload.get("title_jp")
-            air_date = _parse_date(snapshot.payload.get("air_date"))
-            if not isinstance(title, str) or not title or air_date is None:
-                continue
-            candidates = [
-                candidate
-                for candidate in await self._anilist.search(title)
-                if not candidate.nsfw
-                and candidate.air_date == air_date
-                and isinstance(candidate.title_cn, str)
-                and _normalize_title(candidate.title_cn) == _normalize_title(title)
-            ]
-            if len(candidates) != 1:
-                continue
-            if await self._confirm(anime.id, candidates[0].subject_id):
+            if await self._discover(anime.id, snapshot):
                 confirmed += 1
                 linked.add(anime.id)
 
@@ -94,6 +80,43 @@ class AniListLinkDiscoveryService:
             rows_processed=len(rows),
             links_confirmed=confirmed,
         )
+
+    async def enrich_anime(self, anime_id: UUID) -> bool:
+        """Immediately attempt one strict mapping without moving the batch cursor."""
+        if anime_id in await self._confirmed_anime_ids():
+            return False
+        rows = await self._targets(
+            cursor=None,
+            limit=1,
+            anime_id=anime_id,
+        )
+        if not rows:
+            return False
+        linked = await self._discover(anime_id, rows[0][2])
+        state = await self._state()
+        await self._mark_success(next_cursor=state.next_cursor if state is not None else None)
+        return linked
+
+    async def _discover(
+        self,
+        anime_id: UUID,
+        snapshot: SourceSnapshot,
+    ) -> bool:
+        title = snapshot.payload.get("title_jp")
+        air_date = _parse_date(snapshot.payload.get("air_date"))
+        if not isinstance(title, str) or not title or air_date is None:
+            return False
+        candidates = [
+            candidate
+            for candidate in await self._anilist.search(title)
+            if not candidate.nsfw
+            and candidate.air_date == air_date
+            and isinstance(candidate.title_cn, str)
+            and _normalize_title(candidate.title_cn) == _normalize_title(title)
+        ]
+        if len(candidates) != 1:
+            return False
+        return await self._confirm(anime_id, candidates[0].subject_id)
 
     async def _confirm(self, anime_id: UUID, anilist_id: int) -> bool:
         delta = await self._sync.sync_subject(anilist_id)
@@ -131,6 +154,7 @@ class AniListLinkDiscoveryService:
         *,
         cursor: UUID | None,
         limit: int,
+        anime_id: UUID | None = None,
     ) -> list[tuple[Anime, ExternalEntry, SourceSnapshot]]:
         async with self._sessions() as session:
             latest = (
@@ -167,6 +191,8 @@ class AniListLinkDiscoveryService:
             )
             if cursor is not None:
                 stmt = stmt.where(Anime.id > cursor)
+            if anime_id is not None:
+                stmt = stmt.where(Anime.id == anime_id)
             rows = (await session.execute(stmt)).all()
         return [(row[0], row[1], row[2]) for row in rows]
 
