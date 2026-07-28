@@ -4,18 +4,25 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, date, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
-from anime_qqbot.catalog.models import AiringOccurrence, AnimeDetail
+from anime_qqbot.catalog.anilist_mapping import AniListLinkDiscoveryService
+from anime_qqbot.catalog.models import AiringOccurrence, AnimeDetail, AnimeSummary
 from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
 from anime_qqbot.catalog.sync_anilist import AniListSyncService
 from anime_qqbot.clock import FrozenClock
-from anime_qqbot.persistence.models.catalog import AiringOccurrenceRow
+from anime_qqbot.persistence.models.catalog import (
+    AiringOccurrenceRow,
+    Anime,
+    AnimeSourceLink,
+    ExternalEntry,
+    SourceSnapshot,
+)
 
 
 class _StubAniList:
@@ -23,9 +30,11 @@ class _StubAniList:
         self,
         results: dict[int, AnimeDetail | None],
         schedules: dict[int, list[AiringOccurrence]] | None = None,
+        searches: dict[str, list[AnimeSummary]] | None = None,
     ) -> None:
         self._results = results
         self._schedules = schedules or {}
+        self._searches = searches or {}
         self.calls: list[int] = []
 
     async def fetch_media(self, anilist_id: int) -> AnimeDetail | None:
@@ -34,6 +43,9 @@ class _StubAniList:
 
     async def airing_schedule(self, anilist_id: int) -> list[AiringOccurrence]:
         return self._schedules.get(anilist_id, [])
+
+    async def search(self, query_text: str) -> list[AnimeSummary]:
+        return self._searches.get(query_text, [])
 
 
 def _engine():
@@ -187,3 +199,118 @@ async def test_confirmed_link_persists_exact_airing_schedule(session_factory) ->
     assert row.anime_id == anime.id
     assert row.air_at == occurrence.air_at
     assert row.precision == "exact"
+
+
+@pytest.mark.asyncio
+async def test_discovery_confirms_unique_exact_native_title_and_air_date(
+    session_factory,
+) -> None:
+    now = datetime(2026, 7, 29, tzinfo=UTC)
+    anime_id = uuid4()
+    bangumi_entry_id = uuid4()
+    title = "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～"
+    candidate = AnimeSummary(
+        subject_id=128757,
+        title_cn=title,
+        title_jp="Tai-Ari deshita.",
+        air_date=date(2026, 7, 7),
+        nsfw=False,
+    )
+    detail = _detail(128757)
+    detail = AnimeDetail(
+        subject_id=detail.subject_id,
+        title_cn=detail.title_cn,
+        title_jp=detail.title_jp,
+        air_date=date(2026, 7, 7),
+        summary=detail.summary,
+        score=detail.score,
+        total_episodes=detail.total_episodes,
+        nsfw=detail.nsfw,
+    )
+    stub = _StubAniList(
+        {128757: detail},
+        searches={title: [candidate]},
+    )
+    async with session_factory() as session, session.begin():
+        session.add(
+            Anime(
+                id=anime_id,
+                nsfw_flag="false",
+                disabled=False,
+                display_title="感谢对战。 ～大小姐才不玩格斗游戏～",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            ExternalEntry(
+                id=bangumi_entry_id,
+                provider="bangumi",
+                external_id="325767",
+                url="https://bgm.tv/subject/325767",
+                disabled=False,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add(
+            AnimeSourceLink(
+                id=uuid4(),
+                anime_id=anime_id,
+                external_entry_id=bangumi_entry_id,
+                status="confirmed",
+                evidence_type="manual",
+                confidence=1.0,
+                method="fixture",
+                created_at=now,
+            )
+        )
+        session.add(
+            SourceSnapshot(
+                id=uuid4(),
+                external_entry_id=bangumi_entry_id,
+                version=1,
+                payload={
+                    "title_jp": title,
+                    "title_cn": "感谢对战。",
+                    "air_date": "2026-07-07",
+                    "total_episodes": 12,
+                },
+                source_time=now,
+                fetched_at=now,
+                expires_at=None,
+            )
+        )
+
+    sync = AniListSyncService(
+        stub,
+        CatalogWriteRepository(session_factory),
+        FrozenClock(now),
+    )
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=sync,
+        clock=FrozenClock(now),
+    )
+
+    result = await discovery.run_once(limit=10)
+
+    assert result.links_confirmed == 1
+    async with session_factory() as session:
+        entry = (
+            await session.execute(
+                select(ExternalEntry).where(
+                    ExternalEntry.provider == "anilist",
+                    ExternalEntry.external_id == "128757",
+                )
+            )
+        ).scalar_one()
+        link = (
+            await session.execute(
+                select(AnimeSourceLink).where(AnimeSourceLink.external_entry_id == entry.id)
+            )
+        ).scalar_one()
+    assert link.anime_id == anime_id
+    assert link.status == "confirmed"
+    assert link.evidence_type == "title_season_year"

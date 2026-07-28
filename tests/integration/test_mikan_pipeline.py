@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from anime_qqbot.entrypoints.cli import _register_mikan_link
+from anime_qqbot.entrypoints.cli import _discover_mikan_links, _register_mikan_link
 from anime_qqbot.notifications.outbox import OutboxRepository
 from anime_qqbot.persistence.models.catalog import Anime, AnimeSourceLink, ExternalEntry
 from anime_qqbot.persistence.models.identity import ChatGroup
@@ -18,10 +18,15 @@ from anime_qqbot.persistence.models.subscriptions_v2 import (
     FollowSubscription,
     SubscriptionResourceFilter,
 )
-from anime_qqbot.resources.adapters.mikan import MikanFeedResult, MikanItem
+from anime_qqbot.resources.adapters.mikan import (
+    MikanAnimeEntry,
+    MikanFeedResult,
+    MikanItem,
+)
 from anime_qqbot.resources.module import MikanReleasePipeline
 
 RSS_URL = "https://mikanani.me/RSS/Bangumi?bangumiId=123"
+DOMESTIC_RSS_URL = "https://mikanime.tv/RSS/Bangumi?bangumiId=123"
 NOW = datetime(2026, 7, 28, 12, 0, tzinfo=UTC)
 
 
@@ -195,8 +200,8 @@ async def test_poll_deduplicates_feed_and_persists_release_batch(
     assert first.releases_created == 1
     assert second.releases_created == 0
     assert client.calls == [
-        (RSS_URL, None, None),
-        (RSS_URL, '"v1"', "Tue, 28 Jul 2026 12:00:00 GMT"),
+        (DOMESTIC_RSS_URL, None, None),
+        (DOMESTIC_RSS_URL, '"v1"', "Tue, 28 Jul 2026 12:00:00 GMT"),
     ]
     async with sessions() as session:
         release_count = await session.scalar(select(func.count()).select_from(ResourceRelease))
@@ -304,3 +309,104 @@ async def test_operator_can_register_confirmed_mikan_mapping(
     assert entry.provider == "mikan"
     assert entry.external_id == "456"
     assert link.status == "confirmed"
+
+
+async def test_discovery_confirms_mapping_only_when_public_cross_id_matches(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    anime_id = uuid4()
+    bangumi_entry_id = uuid4()
+    group_id = uuid4()
+    title = "感谢对战。 ～大小姐才不玩格斗游戏～"
+    async with sessions() as session, session.begin():
+        session.add(
+            Anime(
+                id=anime_id,
+                nsfw_flag="false",
+                disabled=False,
+                display_title=title,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.add(
+            ExternalEntry(
+                id=bangumi_entry_id,
+                provider="bangumi",
+                external_id="325767",
+                url="https://bgm.tv/subject/325767",
+                disabled=False,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.add(
+            AnimeSourceLink(
+                id=uuid4(),
+                anime_id=anime_id,
+                external_entry_id=bangumi_entry_id,
+                status="confirmed",
+                evidence_type="manual",
+                confidence=1.0,
+                method="fixture",
+                created_at=NOW,
+            )
+        )
+        session.add(
+            ChatGroup(
+                id=group_id,
+                platform="qq",
+                external_group_id="43",
+                unified_msg_origin="umo:43",
+                timezone="Asia/Shanghai",
+                enabled=True,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.add(
+            FollowSubscription(
+                id=uuid4(),
+                chat_group_id=group_id,
+                external_user_id="u-resource",
+                anime_id=anime_id,
+                notify_airing=True,
+                notify_resource=True,
+                created_at=NOW,
+            )
+        )
+
+    class _DiscoveryClient:
+        async def discover_current_anime(self) -> tuple[MikanAnimeEntry, ...]:
+            return (MikanAnimeEntry(mikan_id=4035, title=title),)
+
+        async def fetch_bangumi_subject_id(self, mikan_id: int) -> int | None:
+            assert mikan_id == 4035
+            return 325767
+
+    created = await _discover_mikan_links(
+        sessions,
+        _DiscoveryClient(),
+        now=NOW,
+        limit=10,
+    )
+
+    assert created == 1
+    async with sessions() as session:
+        entry = (
+            await session.execute(
+                select(ExternalEntry).where(
+                    ExternalEntry.provider == "mikan",
+                    ExternalEntry.external_id == "4035",
+                )
+            )
+        ).scalar_one()
+        link = (
+            await session.execute(
+                select(AnimeSourceLink).where(AnimeSourceLink.external_entry_id == entry.id)
+            )
+        ).scalar_one()
+    assert entry.url == "https://mikanime.tv/Home/Bangumi/4035"
+    assert link.anime_id == anime_id
+    assert link.status == "confirmed"
+    assert link.evidence_type == "mikan_bangumi_link"

@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import logging
 import os
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -34,6 +35,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from anime_qqbot.catalog.adapters.anilist import AniListClient, AniListConfig
 from anime_qqbot.catalog.adapters.bangumi import BangumiClient
+from anime_qqbot.catalog.anilist_mapping import AniListLinkDiscoveryService
 from anime_qqbot.catalog.bangumi_sync import BangumiCatalogSync
 from anime_qqbot.catalog.models import LinkEvidenceType, LinkStatus
 from anime_qqbot.catalog.projection import project_anime
@@ -53,8 +55,10 @@ from anime_qqbot.persistence.models.catalog import (
     AnimeSourceLink,
     ExternalEntry,
     SourceSnapshot,
+    SourceSyncState,
 )
 from anime_qqbot.persistence.models.runtime import ProcessedPlatformEvent, WorkerHeartbeat
+from anime_qqbot.persistence.models.subscriptions_v2 import FollowSubscription
 from anime_qqbot.persistence.session import create_engine, create_session_factory
 from anime_qqbot.resources.adapters.mikan import MikanClient
 from anime_qqbot.resources.module import MikanReleasePipeline, PollSummary
@@ -83,6 +87,7 @@ class WorkerComponents:
     mikan_client: MikanClient
     bangumi_sync: BangumiCatalogSync
     anilist_sync: AniListSyncService
+    anilist_discovery: AniListLinkDiscoveryService
     planner: AiringPlanner
     mikan_pipeline: MikanReleasePipeline
 
@@ -124,6 +129,12 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         write_repo=write_repo,
         clock=clock,
     )
+    anilist_discovery = AniListLinkDiscoveryService(
+        sessions=sessions,
+        anilist=anilist_client,
+        sync=anilist_sync,
+        clock=clock,
+    )
     follows = FollowRepository(sessions)
     outbox = OutboxRepository(sessions)
     planner = AiringPlanner(follow_repo=follows, outbox=outbox)
@@ -144,6 +155,7 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         mikan_client=mikan_client,
         bangumi_sync=bangumi_sync,
         anilist_sync=anilist_sync,
+        anilist_discovery=anilist_discovery,
         planner=planner,
         mikan_pipeline=mikan_pipeline,
     )
@@ -198,19 +210,21 @@ async def _ingest_known_subjects(
     Each source has its own error boundary so one provider failure
     cannot stop the other.
     """
+    entries: list[ExternalEntry] = []
     async with components.sessions() as session:
-        entries = (
-            (
-                await session.execute(
-                    select(ExternalEntry)
-                    .where(ExternalEntry.provider.in_((SOURCE_BANGUMI, SOURCE_ANILIST)))
-                    .where(ExternalEntry.disabled.is_(False))
-                    .limit(limit)
+        for provider in (SOURCE_BANGUMI, SOURCE_ANILIST):
+            entries.extend(
+                (
+                    await session.execute(
+                        select(ExternalEntry)
+                        .where(ExternalEntry.provider == provider)
+                        .where(ExternalEntry.disabled.is_(False))
+                        .limit(limit)
+                    )
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
     for entry in entries:
         if not entry.external_id.isdigit():
             continue
@@ -266,6 +280,177 @@ async def _discover_calendar_subjects(
     return created
 
 
+async def _discover_mikan_links(
+    sessions: async_sessionmaker[AsyncSession],
+    client: MikanClient,
+    *,
+    now: datetime,
+    limit: int,
+) -> int:
+    """Confirm Mikan mappings backed by Mikan's explicit Bangumi cross-link."""
+    catalogue = await client.discover_current_anime()
+    by_title: dict[str, list[int]] = {}
+    for catalogue_entry in catalogue:
+        by_title.setdefault(_normalize_exact_title(catalogue_entry.title), []).append(
+            catalogue_entry.mikan_id
+        )
+
+    async with sessions() as session:
+        rows = (
+            await session.execute(
+                select(Anime, ExternalEntry)
+                .join(
+                    AnimeSourceLink,
+                    AnimeSourceLink.anime_id == Anime.id,
+                )
+                .join(
+                    ExternalEntry,
+                    ExternalEntry.id == AnimeSourceLink.external_entry_id,
+                )
+                .join(
+                    FollowSubscription,
+                    FollowSubscription.anime_id == Anime.id,
+                )
+                .where(ExternalEntry.provider == SOURCE_BANGUMI)
+                .where(ExternalEntry.disabled.is_(False))
+                .where(AnimeSourceLink.status == LinkStatus.CONFIRMED.value)
+                .where(Anime.disabled.is_(False))
+                .where(Anime.nsfw_flag != "true")
+                .where(FollowSubscription.notify_resource.is_(True))
+                .distinct(Anime.id, ExternalEntry.id)
+            )
+        ).all()
+        already_linked = set(
+            (
+                await session.execute(
+                    select(AnimeSourceLink.anime_id)
+                    .join(
+                        ExternalEntry,
+                        ExternalEntry.id == AnimeSourceLink.external_entry_id,
+                    )
+                    .where(ExternalEntry.provider == "mikan")
+                    .where(AnimeSourceLink.status == LinkStatus.CONFIRMED.value)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    write_repo = CatalogWriteRepository(sessions)
+    created = 0
+    unlinked_rows = [
+        (anime, bangumi_entry)
+        for anime, bangumi_entry in rows
+        if anime.id not in already_linked and anime.display_title
+    ][:limit]
+    for anime, bangumi_entry in unlinked_rows:
+        candidates = by_title.get(_normalize_exact_title(anime.display_title), [])
+        if len(candidates) != 1:
+            continue
+        mikan_id = candidates[0]
+        try:
+            subject_id = await client.fetch_bangumi_subject_id(mikan_id)
+        except Exception as exc:
+            logger.warning(
+                "worker.mikan.mapping_cross_id_failed",
+                extra={"mikan_id": mikan_id, "error": str(exc)},
+            )
+            continue
+        if subject_id is None or str(subject_id) != bangumi_entry.external_id:
+            continue
+        mikan_external = await write_repo.upsert_external_entry(
+            provider="mikan",
+            external_id=str(mikan_id),
+            url=f"https://mikanime.tv/Home/Bangumi/{mikan_id}",
+        )
+        existing = await write_repo.find_source_link(
+            anime_id=None,
+            external_entry_id=mikan_external.id,
+        )
+        if existing is not None:
+            if existing.anime_id != anime.id:
+                logger.warning(
+                    "worker.mikan.mapping_conflict",
+                    extra={"mikan_id": mikan_id},
+                )
+                continue
+            if existing.status == LinkStatus.CONFIRMED.value:
+                continue
+            await write_repo.set_link_status(
+                link_id=existing.id,
+                status=LinkStatus.CONFIRMED.value,
+                reviewed_by="mikan_public_cross_id_v1",
+            )
+        else:
+            await write_repo.add_source_link(
+                anime_id=anime.id,
+                external_entry_id=mikan_external.id,
+                status=LinkStatus.CONFIRMED.value,
+                evidence_type=LinkEvidenceType.MIKAN_BANGUMI_LINK.value,
+                confidence=1.0,
+                method="mikan_public_cross_id_v1",
+            )
+        created += 1
+        already_linked.add(anime.id)
+    await _record_source_success(sessions, "mikan", now)
+    return created
+
+
+def _normalize_exact_title(title: str) -> str:
+    return "".join(unicodedata.normalize("NFKC", title).casefold().split())
+
+
+async def _record_source_success(
+    sessions: async_sessionmaker[AsyncSession],
+    provider: str,
+    now: datetime,
+) -> None:
+    async with sessions() as session, session.begin():
+        row = await session.get(SourceSyncState, provider)
+        if row is None:
+            row = SourceSyncState(
+                provider=provider,
+                last_success_at=now,
+                last_failure_at=None,
+                last_error=None,
+                next_cursor=None,
+                rate_limit_remaining=None,
+                updated_at=now,
+            )
+            session.add(row)
+        else:
+            row.last_success_at = now
+            row.last_error = None
+            row.updated_at = now
+
+
+async def _record_source_failure(
+    sessions: async_sessionmaker[AsyncSession],
+    provider: str,
+    now: datetime,
+    error: str,
+) -> None:
+    safe_error = error[:1000]
+    async with sessions() as session, session.begin():
+        row = await session.get(SourceSyncState, provider)
+        if row is None:
+            session.add(
+                SourceSyncState(
+                    provider=provider,
+                    last_success_at=None,
+                    last_failure_at=now,
+                    last_error=safe_error,
+                    next_cursor=None,
+                    rate_limit_remaining=None,
+                    updated_at=now,
+                )
+            )
+        else:
+            row.last_failure_at = now
+            row.last_error = safe_error
+            row.updated_at = now
+
+
 async def _plan_airing_reminders(components: WorkerComponents, now: datetime) -> int:
     """Walk recent/upcoming Airing Occurrences and enqueue per-group jobs.
 
@@ -313,8 +498,12 @@ async def _project_fresh_snapshots(components: WorkerComponents) -> int:
     updated = 0
     async with components.sessions() as session:
         stmt = (
-            select(Anime, SourceSnapshot)
+            select(Anime, ExternalEntry.provider, SourceSnapshot)
             .join(AnimeSourceLink, AnimeSourceLink.anime_id == Anime.id)
+            .join(
+                ExternalEntry,
+                ExternalEntry.id == AnimeSourceLink.external_entry_id,
+            )
             .join(
                 SourceSnapshot,
                 SourceSnapshot.external_entry_id == AnimeSourceLink.external_entry_id,
@@ -322,23 +511,39 @@ async def _project_fresh_snapshots(components: WorkerComponents) -> int:
             .where(AnimeSourceLink.status == "confirmed")
             .where(Anime.disabled.is_(False))
             .order_by(SourceSnapshot.fetched_at.desc())
-            .limit(50)
+            .limit(200)
         )
         rows = (await session.execute(stmt)).all()
-    for anime, snap in rows:
+    grouped: dict[UUID, tuple[Anime, dict[str, SourceSnapshot]]] = {}
+    for anime, provider, snapshot in rows:
+        item = grouped.setdefault(anime.id, (anime, {}))
+        item[1].setdefault(provider, snapshot)
+
+    for anime, snapshots in grouped.values():
+        bangumi = snapshots.get(SOURCE_BANGUMI)
+        anilist = snapshots.get(SOURCE_ANILIST)
         projection = project_anime(
             internal_id=anime.id,
-            bangumi_snapshot=snap.payload if snap.payload else None,
-            anilist_snapshot=None,
-            bangumi_fetched_at=snap.fetched_at,
+            bangumi_snapshot=bangumi.payload if bangumi is not None else None,
+            anilist_snapshot=anilist.payload if anilist is not None else None,
+            bangumi_fetched_at=bangumi.fetched_at if bangumi is not None else None,
+            anilist_fetched_at=anilist.fetched_at if anilist is not None else None,
         )
         async with components.sessions() as session, session.begin():
             row = await session.get(Anime, anime.id)
             if row is None:
                 continue
-            row.nsfw_flag = "true" if projection.nsfw_blocked else row.nsfw_flag
-            if projection.display_title and not row.display_title:
-                row.display_title = str(projection.display_title.value)
+            changed = False
+            if projection.nsfw_blocked and row.nsfw_flag != "true":
+                row.nsfw_flag = "true"
+                changed = True
+            if projection.display_title:
+                display_title = str(projection.display_title.value)
+                if row.display_title != display_title:
+                    row.display_title = display_title
+                    changed = True
+            if changed:
+                row.updated_at = components.clock.now()
                 updated += 1
     return updated
 
@@ -347,7 +552,18 @@ async def _drive_release_batches(
     components: WorkerComponents,
     now: datetime,
 ) -> PollSummary:
-    return await components.mikan_pipeline.run_once(now)
+    summary = await components.mikan_pipeline.run_once(now)
+    successful = summary.feeds_polled - summary.feed_failures
+    if successful > 0:
+        await _record_source_success(components.sessions, "mikan", now)
+    if summary.feed_failures > 0:
+        await _record_source_failure(
+            components.sessions,
+            "mikan",
+            now,
+            f"{summary.feed_failures}/{summary.feeds_polled} Mikan feeds failed",
+        )
+    return summary
 
 
 async def _register_mikan_link(
@@ -366,7 +582,7 @@ async def _register_mikan_link(
     entry = await write_repo.upsert_external_entry(
         provider="mikan",
         external_id=str(mikan_id),
-        url=f"https://mikanani.me/Home/Bangumi/{mikan_id}",
+        url=f"https://mikanime.tv/Home/Bangumi/{mikan_id}",
     )
     existing = await write_repo.find_source_link(
         anime_id=None,
@@ -460,7 +676,18 @@ async def run_worker() -> None:
     async def operator_sync_catalog(_parameters: dict[str, object]) -> dict[str, object]:
         discovered = await _discover_calendar_subjects(components, limit=100)
         await _ingest_known_subjects(components, limit=100)
-        return {"discovered": discovered}
+        anilist = await components.anilist_discovery.run_once(limit=20)
+        mikan = await _discover_mikan_links(
+            components.sessions,
+            components.mikan_client,
+            now=components.clock.now(),
+            limit=100,
+        )
+        return {
+            "discovered": discovered,
+            "anilist_links": anilist.links_confirmed,
+            "mikan_links": mikan,
+        }
 
     async def operator_poll_mikan(_parameters: dict[str, object]) -> dict[str, object]:
         summary = await _drive_release_batches(components, components.clock.now())
@@ -504,6 +731,31 @@ async def run_worker() -> None:
                     await _ingest_known_subjects(components, limit=100)
                 except Exception as exc:
                     logger.exception("worker.ingest", extra={"error": str(exc)})
+                try:
+                    await components.anilist_discovery.run_once(limit=20)
+                except Exception as exc:
+                    await _record_source_failure(
+                        components.sessions,
+                        SOURCE_ANILIST,
+                        now,
+                        str(exc),
+                    )
+                    logger.exception("worker.anilist.discovery", extra={"error": str(exc)})
+                try:
+                    await _discover_mikan_links(
+                        components.sessions,
+                        components.mikan_client,
+                        now=now,
+                        limit=100,
+                    )
+                except Exception as exc:
+                    await _record_source_failure(
+                        components.sessions,
+                        "mikan",
+                        now,
+                        str(exc),
+                    )
+                    logger.exception("worker.mikan.discovery", extra={"error": str(exc)})
                 try:
                     await _run_source_heartbeats(components)
                 except Exception as exc:

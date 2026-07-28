@@ -421,12 +421,16 @@ class MikanReleasePipeline:
 
 def _public_feed_url(external_id: str, configured_url: str | None) -> str | None:
     if external_id.isdigit():
-        return f"https://mikanani.me/RSS/Bangumi?bangumiId={external_id}"
+        return f"https://mikanime.tv/RSS/Bangumi?bangumiId={external_id}"
     return None
 
 
 def _safe_page_url(url: str) -> str | None:
-    return url if re.fullmatch(r"https://(?:www\.)?mikanani\.me/[^\s]+", url) else None
+    return (
+        url
+        if re.fullmatch(r"https://(?:(?:www\.)?mikanani\.me|mikanime\.tv)/[^\s]+", url)
+        else None
+    )
 
 
 def _fingerprint(item: MikanItem) -> str:

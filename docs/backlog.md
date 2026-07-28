@@ -19,6 +19,24 @@ v0.3.0 已完成：
 - 所有限频参数可配置，默认值面向少量群的保守运行方式；
 - 管理页可查看队列数量、失败任务、投递控制和熔断状态。
 
+## 已完成：AniList 与 Mikan 数据源可运行修复
+
+- AniList 已在服务器实测可连，Worker 会按游标增量处理 Bangumi 条目；
+- 只有日文原名和完整首播日期唯一一致的 AniList 候选才会自动确认，歧义候选不合并；
+- AniList confirmed 后会立即同步详情快照和精确放送计划；
+- Mikan 默认改用官方国内域名 `mikanime.tv`，同时支持站点重定向；
+- Mikan RSS 兼容旧版 RFC 2822 和当前命名空间内的 ISO 8601 发布时间；
+- 只有 Mikan 页面公开的 Bangumi ID 与本地 confirmed Bangumi ID 一致时，才自动建立
+  confirmed Mikan 映射；
+- Worker 首轮同步即可为开启资源提醒的订阅补齐 Mikan 映射并开始轮询；
+- 管理面板的数据源状态会记录 AniList/Mikan 最近成功、失败和安全错误摘要；
+- 当前真实接口验证：Mikan 目录、交叉 ID、公开 RSS 与 AniList GraphQL 均可正常返回。
+
+仍需部署者完成：
+
+- 发布本次代码后在管理面板触发一次“同步目录”和“轮询 Mikan”；
+- 在真实群观察一次预计放送提醒和一次 Mikan 十分钟聚合提醒。
+
 ## P0：QQ 小号登录风险与发布隔离
 
 已完成：

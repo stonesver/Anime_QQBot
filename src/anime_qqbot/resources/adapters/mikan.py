@@ -8,8 +8,10 @@ and Mikan page link. No private tokens, no magnet links.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -37,6 +39,12 @@ class MikanFeedResult:
     not_modified: bool = False
 
 
+@dataclass(frozen=True)
+class MikanAnimeEntry:
+    mikan_id: int
+    title: str
+
+
 @dataclass
 class MikanClient:
     user_agent: str = "anime-qqbot/0.2"
@@ -57,6 +65,7 @@ class MikanClient:
             self.client = httpx.AsyncClient(
                 timeout=httpx.Timeout(10, connect=3),
                 headers={"User-Agent": self.user_agent},
+                follow_redirects=True,
             )
         return self.client
 
@@ -103,6 +112,42 @@ class MikanClient:
             last_modified=resp.headers.get("Last-Modified"),
         )
 
+    async def discover_current_anime(self) -> tuple[MikanAnimeEntry, ...]:
+        """Return the public current-season catalogue from Mikan's domestic site."""
+        response = await self._get_public_page("https://mikanime.tv/")
+        parser = _MikanHomepageParser()
+        parser.feed(response.text)
+        unique: dict[int, MikanAnimeEntry] = {}
+        for entry in parser.entries:
+            unique.setdefault(entry.mikan_id, entry)
+        return tuple(unique.values())
+
+    async def fetch_bangumi_subject_id(self, mikan_id: int) -> int | None:
+        """Read Mikan's explicit Bangumi cross-link for one anime."""
+        if mikan_id <= 0:
+            raise ProviderError(ProviderErrorKind.PERMANENT, "invalid Mikan anime id")
+        response = await self._get_public_page(f"https://mikanime.tv/Home/Bangumi/{mikan_id}")
+        matches = {
+            int(value)
+            for value in re.findall(
+                r"https://(?:bgm\.tv|bangumi\.tv)/subject/([0-9]+)",
+                response.text,
+                flags=re.IGNORECASE,
+            )
+        }
+        return next(iter(matches)) if len(matches) == 1 else None
+
+    async def _get_public_page(self, url: str) -> httpx.Response:
+        try:
+            response = await self._http().get(url)
+        except httpx.TransportError as exc:
+            raise ProviderError(ProviderErrorKind.TEMPORARY, "mikan transport error") from exc
+        if response.status_code >= 500:
+            raise ProviderError(ProviderErrorKind.TEMPORARY, f"mikan {response.status_code}")
+        if response.status_code >= 400:
+            raise ProviderError(ProviderErrorKind.PERMANENT, f"mikan {response.status_code}")
+        return response
+
     @staticmethod
     def _parse_xml(content: str) -> list[MikanItem]:
         root = fromstring(content)
@@ -113,16 +158,16 @@ class MikanClient:
         for el in channel.findall("item"):
             guid_el = el.find("guid")
             title_el = el.find("title")
-            pub_el = el.find("pubDate")
             link_el = el.find("link")
-            if guid_el is None or title_el is None or pub_el is None:
+            pub_text = _find_publish_date(el)
+            if guid_el is None or title_el is None or pub_text is None:
                 continue
             guid = (guid_el.text or "").strip()
             title_str = (title_el.text or "").strip()
             link_str = (link_el.text or "").strip() if link_el is not None else ""
             if not guid or not title_str:
                 continue
-            pub = _parse_rfc2822(pub_el.text or "")
+            pub = _parse_publish_date(pub_text)
             items.append(
                 MikanItem(
                     guid=guid,
@@ -134,13 +179,60 @@ class MikanClient:
         return items
 
 
-def _parse_rfc2822(text: str) -> datetime:
+class _MikanHomepageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.entries: list[MikanAnimeEntry] = []
+        self._mikan_id: int | None = None
+        self._title_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag != "a":
+            return
+        href = dict(attrs).get("href") or ""
+        match = re.fullmatch(r"/Home/Bangumi/([0-9]+)", href)
+        if match is None:
+            return
+        self._mikan_id = int(match.group(1))
+        self._title_parts = []
+
+    def handle_data(self, data: str) -> None:
+        if self._mikan_id is not None:
+            self._title_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or self._mikan_id is None:
+            return
+        title = " ".join(" ".join(self._title_parts).split())
+        if title:
+            self.entries.append(MikanAnimeEntry(self._mikan_id, title))
+        self._mikan_id = None
+        self._title_parts = []
+
+
+def _find_publish_date(element: object) -> str | None:
+    iterator = getattr(element, "iter", None)
+    if iterator is None:
+        return None
+    for child in iterator():
+        tag = getattr(child, "tag", "")
+        if isinstance(tag, str) and tag.rsplit("}", maxsplit=1)[-1] == "pubDate":
+            text = (getattr(child, "text", None) or "").strip()
+            if text:
+                return text
+    return None
+
+
+def _parse_publish_date(text: str) -> datetime:
     import email.utils
 
-    tt = email.utils.parsedate_to_datetime(text)
-    if tt.tzinfo is None:
-        tt = tt.replace(tzinfo=UTC)
-    return tt
+    try:
+        parsed = email.utils.parsedate_to_datetime(text)
+    except (TypeError, ValueError):
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _validate_public_anime_feed(rss_url: str) -> None:
@@ -149,7 +241,7 @@ def _validate_public_anime_feed(rss_url: str) -> None:
     bangumi_ids = query.get("bangumiId", [])
     valid = (
         parsed.scheme == "https"
-        and parsed.hostname in {"mikanani.me", "www.mikanani.me"}
+        and parsed.hostname in {"mikanani.me", "www.mikanani.me", "mikanime.tv"}
         and parsed.path == "/RSS/Bangumi"
         and set(query) == {"bangumiId"}
         and len(bangumi_ids) == 1
@@ -162,4 +254,4 @@ def _validate_public_anime_feed(rss_url: str) -> None:
         )
 
 
-__all__ = ["MikanClient", "MikanFeedResult", "MikanItem"]
+__all__ = ["MikanAnimeEntry", "MikanClient", "MikanFeedResult", "MikanItem"]

@@ -181,7 +181,9 @@ docker compose logs worker | grep -E 'Bangumi|AniList|Mikan|sync|poll'
 
 不要通过大幅提高轮询频率绕过上游限制。Bangumi 必须使用可联系到维护者的
 `BANGUMI_USER_AGENT`；Mikan Feed 只接受公开的
-`https://mikanani.me/RSS/Bangumi?bangumiId=<数字>`。
+国内服务器默认使用
+`https://mikanime.tv/RSS/Bangumi?bangumiId=<数字>`；适配器同时接受
+`https://mikanani.me/RSS/Bangumi?bangumiId=<数字>` 公开地址。
 
 ## 备份与恢复
 
