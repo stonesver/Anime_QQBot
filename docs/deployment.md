@@ -14,17 +14,15 @@
 
 在阿里云容器镜像服务的 `stonesver/anime-qqbot` 仓库中确认：
 
-| 配置 | 值 |
-|---|---|
-| 类型 | Branch |
-| 分支 | `main` |
-| 构建上下文 | `/` |
-| Dockerfile | `Dockerfile` |
-| 架构 | `linux/amd64` |
-| 镜像版本 | `latest` |
-| 自动构建 | main 更新时触发 |
+| Dockerfile | 镜像版本 | 架构 | 海外机器构建 |
+|---|---|---|---|
+| `Dockerfile` | `latest` | `linux/amd64` | 按现有成功规则 |
+| `Dockerfile.postgres` | `vendor-postgres-17.4-alpine` | `linux/amd64` | 开启 |
+| `Dockerfile.napcat` | `vendor-napcat-v4.18.13` | `linux/amd64` | 开启 |
 
-必须先看到 `latest` 构建成功，再操作生产服务器。
+三条规则都使用 Branch `main`、构建上下文 `/`，并开启代码变更自动构建。必须先看到
+三个标签全部构建成功，再操作生产服务器。服务器随后只访问 ACR，不再直接访问
+Docker Hub。
 
 ## 2. 生成和上传最小部署包
 
@@ -63,6 +61,8 @@ chmod 600 .env
 ```dotenv
 APP_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot
 IMAGE_TAG=latest
+POSTGRES_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-postgres-17.4-alpine
+NAPCAT_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.18.13
 COMPOSE_FILE=compose.yaml:compose.server-2g.yaml
 POSTGRES_PASSWORD=<现有 anime 数据库角色密码>
 BANGUMI_USER_AGENT=anime-qqbot/0.2.0 (your-email@example.com)
@@ -91,7 +91,7 @@ sudo docker compose ps
 
 1. 校验配置并取得部署锁；
 2. 在可用时备份数据库和保存旧应用镜像；
-3. 拉取 ACR 应用镜像及固定版本第三方镜像；
+3. 从 ACR 拉取应用镜像及两个固定版本 vendor 镜像；
 4. 等待 PostgreSQL、执行 migration；
 5. 依次启动 Worker/AstrBot 和 NapCat；
 6. 输出实际镜像 ID、digest、备份路径和 Compose 状态。

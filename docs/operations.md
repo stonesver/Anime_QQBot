@@ -20,6 +20,9 @@ COMPOSE_FILE=compose.yaml:compose.server-2g.yaml
 这样五个单元会套用 2 GiB 主机资源上限。不要对整台主机运行 Docker 全局 prune；
 OurNotes 和其他服务不属于本项目。
 
+应用、PostgreSQL 和 NapCat 都从 `stonesver/anime-qqbot` ACR 仓库的固定标签拉取。
+服务器不应依赖 Docker Hub 加速器；两个 vendor 标签只在上游固定版本变化时更新。
+
 ## ACR 升级与应用回滚
 
 在 ACR 控制台确认 `latest` 构建成功后：

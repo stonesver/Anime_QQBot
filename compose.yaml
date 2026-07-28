@@ -34,7 +34,7 @@ x-app: &app
 
 services:
   postgres:
-    image: postgres:17.4-alpine
+    image: ${POSTGRES_IMAGE:-crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-postgres-17.4-alpine}
     environment:
       POSTGRES_DB: anime
       POSTGRES_USER: anime
@@ -102,7 +102,7 @@ services:
         condition: service_completed_successfully
 
   napcat:
-    image: mlikiowa/napcat-docker:v4.18.13
+    image: ${NAPCAT_IMAGE:-crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.18.13}
     entrypoint: ["/bin/bash", "/usr/local/bin/anime-napcat-entrypoint"]
     environment:
       NAPCAT_UID: ${NAPCAT_UID:-1000}

@@ -51,7 +51,8 @@ uv sync --frozen
 ACR 仓库：
 `crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:latest`。
 根 `Dockerfile` 生成一个合并镜像，供 migration、Worker 和 AstrBot 三个角色复用；
-服务器不 clone 完整源码，也不现场构建。
+服务器不 clone 完整源码，也不现场构建。应用、PostgreSQL 和 NapCat 均从同一个
+ACR 仓库拉取，生产部署不再依赖服务器直连 Docker Hub。
 
 ```bash
 # 本地生成不含秘密的服务器部署包

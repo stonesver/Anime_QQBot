@@ -77,8 +77,8 @@ def test_third_party_images_and_persistent_paths_are_pinned() -> None:
     dockerfile = Path("Dockerfile").read_text()
 
     assert "soulter/astrbot:v4.26.7" in dockerfile
-    assert "mlikiowa/napcat-docker:v4.18.13" in compose
-    assert "postgres:17.4-alpine" in compose
+    assert "anime-qqbot:vendor-napcat-v4.18.13" in compose
+    assert "anime-qqbot:vendor-postgres-17.4-alpine" in compose
     assert "/AstrBot/data" in compose
     assert "/app/.config/QQ" in compose
     assert "/app/napcat/config" in compose
