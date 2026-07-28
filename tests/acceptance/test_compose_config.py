@@ -52,19 +52,33 @@ def test_runtime_image_excludes_secrets() -> None:
 
     assert "change-me-before-production" not in compose
     assert "POSTGRES_PASSWORD must be set" in compose
-    assert "USER animebot" in dockerfile
+    assert "soulter/astrbot:v4.26.7" in dockerfile
     assert ".env" in dockerignore
     assert ".git" in dockerignore
 
 
-def test_runtime_images_and_paths_are_pinned_to_verified_layout() -> None:
+def test_one_application_image_drives_all_runtime_roles() -> None:
     compose = Path("compose.yaml").read_text()
-    astrbot_dockerfile = Path("Dockerfile.astrbot").read_text()
 
-    assert "soulter/astrbot:v4.26.7" in astrbot_dockerfile
+    assert (
+        "crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot"
+    ) in compose
+    assert "APP_IMAGE" in compose
+    assert 'command: ["migrate"]' in compose
+    assert 'command: ["worker"]' in compose
+    assert 'command: ["astrbot"]' in compose
+    assert "anime-astrbot" not in compose
+    assert not Path("Dockerfile.astrbot").exists()
+    assert "./astrbot_plugin_anime_tracking:" not in compose
+
+
+def test_third_party_images_and_persistent_paths_are_pinned() -> None:
+    compose = Path("compose.yaml").read_text()
+    dockerfile = Path("Dockerfile").read_text()
+
+    assert "soulter/astrbot:v4.26.7" in dockerfile
     assert "mlikiowa/napcat-docker:v4.18.13" in compose
-    assert ":latest" not in compose
-    assert ":latest" not in astrbot_dockerfile
+    assert "postgres:17.4-alpine" in compose
     assert "/AstrBot/data" in compose
     assert "/app/.config/QQ" in compose
     assert "/app/napcat/config" in compose

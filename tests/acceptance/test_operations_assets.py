@@ -18,16 +18,17 @@ def test_operations_scripts_are_executable() -> None:
     assert "DROP SCHEMA public CASCADE" in restore_text
 
 
-def test_multisource_deploy_script_exists() -> None:
-    deploy = Path("scripts/deploy-multisource.sh")
+def test_acr_deploy_script_is_the_only_active_deploy_interface() -> None:
+    deploy = Path("scripts/deploy-acr.sh")
     assert deploy.exists()
-    assert os.access(deploy, os.X_OK) or True  # may not be +x
+    assert os.access(deploy, os.X_OK)
     text = deploy.read_text()
     assert "docker compose" in text
     assert "astrbot" in text
     assert "ONEBOT_TOKEN" in text
     assert "docker compose run --rm --no-deps migrate" in text
-    assert "deploy-acr" not in text
+    assert "docker build" not in text
+    assert not Path("scripts/deploy-multisource.sh").exists()
 
 
 def test_restore_targets_only_v02_runtime_services() -> None:

@@ -11,6 +11,31 @@ docker compose exec -T postgres pg_isready -U anime -d anime
 预期 `postgres`、`worker`、`astrbot`、`napcat` 为 healthy，`migrate` 正常退出。
 AstrBot 的就绪检查还会验证插件消费者心跳；NapCat 的容器健康不等于 QQ 已登录。
 
+生产服务器应使用 `.env` 中的：
+
+```dotenv
+COMPOSE_FILE=compose.yaml:compose.server-2g.yaml
+```
+
+这样五个单元会套用 2 GiB 主机资源上限。不要对整台主机运行 Docker 全局 prune；
+OurNotes 和其他服务不属于本项目。
+
+## ACR 升级与应用回滚
+
+在 ACR 控制台确认 `latest` 构建成功后：
+
+```bash
+cd /opt/anime-qqbot
+./scripts/deploy-acr.sh
+```
+
+部署脚本记录实际镜像 ID/digest，不能仅用可变的 `latest` 判断版本。已有应用容器时，
+升级前镜像会保存为 `anime-qqbot:rollback`。Worker、AstrBot 或 NapCat 健康失败时
+会自动把该镜像重新标记为生产引用并重建三个运行单元。
+
+拉取失败不会替换运行服务；migration 失败会停止发布、恢复旧应用镜像引用，但不会
+自动恢复数据库。首次部署没有旧镜像时无法应用回滚，脚本会明确退出并保留日志供排查。
+
 ## 常见故障
 
 ### 迁移失败
@@ -118,6 +143,23 @@ NapCat，替换整个 `public` schema，重跑迁移，再恢复服务：
 ```bash
 docker compose up -d worker astrbot napcat
 ```
+
+## 2 GiB 主机监控
+
+```bash
+free -h
+vmstat 1 10
+docker stats --no-stream
+docker compose ps
+```
+
+以下任一情况持续出现时，应停止增加插件并评估升级到 4 GiB：
+
+- `MemAvailable` 长期低于 250 MiB；
+- Swap 使用持续增长到 1 GiB 以上；
+- `vmstat` 的 `si/so` 持续非零；
+- AstrBot 或 NapCat OOM/restart；
+- 双核负载长期高于 2。
 
 ## 安全边界
 

@@ -1,0 +1,29 @@
+services:
+  postgres:
+    mem_limit: 192m
+    mem_reservation: 64m
+    cpus: 0.50
+    pids_limit: 256
+
+  migrate:
+    mem_limit: 256m
+    cpus: 0.50
+    pids_limit: 256
+
+  worker:
+    mem_limit: 192m
+    mem_reservation: 64m
+    cpus: 0.50
+    pids_limit: 256
+
+  astrbot:
+    mem_limit: 512m
+    mem_reservation: 256m
+    cpus: 0.80
+    pids_limit: 256
+
+  napcat:
+    mem_limit: 512m
+    mem_reservation: 256m
+    cpus: 0.80
+    pids_limit: 256

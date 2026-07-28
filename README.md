@@ -3,8 +3,8 @@
 AstrBot 多源群聊追番服务：通过 NapCat (OneBot 11) + AstrBot 接入普通 QQ 小号，
 提供群内固定命令查询、订阅追番、预计放送提醒和 Mikan 资源更新通知。
 
-当前状态：v0.2.0 代码、264 项测试与隔离五单元启动验收完成，首次部署仍需在 AstrBot WebUI
-完成一次 OneBot 适配器配置，并在真实测试群执行 canary。
+当前状态：v0.2.0 代码与自动化验收已完成，生产镜像采用 ACR 单镜像发布。首次部署仍需
+在 AstrBot WebUI 完成一次 OneBot 适配器配置，并在真实测试群执行 canary。
 
 ## 核心功能
 
@@ -46,18 +46,23 @@ uv sync --frozen
 .venv/bin/mypy src
 ```
 
-## Docker 快速启动
+## ACR 部署
+
+ACR 仓库：
+`crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:latest`。
+根 `Dockerfile` 生成一个合并镜像，供 migration、Worker 和 AstrBot 三个角色复用；
+服务器不 clone 完整源码，也不现场构建。
 
 ```bash
-cp .env.example .env
-# 填写 POSTGRES_PASSWORD、ONEBOT_TOKEN 和 BANGUMI_USER_AGENT
-chmod 600 .env
-./scripts/deploy-multisource.sh --no-backup
-docker compose ps
+# 本地生成不含秘密的服务器部署包
+./scripts/package-deployment.sh dist/anime-qqbot-deployment.tar.gz
+
+# 服务器解包并准备 .env 后
+./scripts/deploy-acr.sh --no-backup
 ```
 
 - AstrBot WebUI：`http://127.0.0.1:6185`
 - NapCat WebUI：`http://127.0.0.1:6099`
 
 两个管理界面默认只绑定本机。远程服务器请用 SSH 端口转发访问，不要直接暴露到公网。
-首次连接的逐步配置见[部署指南](docs/deployment.md)。
+ACR 规则、上传、首次部署和 OneBot 配置见[部署指南](docs/deployment.md)。

@@ -43,6 +43,6 @@ def test_migrations_are_present() -> None:
     assert any("0009_resource" in v.name for v in versions)
 
 
-def test_dockerfiles_exist() -> None:
+def test_combined_runtime_dockerfile_exists() -> None:
     assert Path("Dockerfile").exists()
-    assert Path("Dockerfile.astrbot").exists()
+    assert not Path("Dockerfile.astrbot").exists()

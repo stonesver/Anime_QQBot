@@ -114,7 +114,6 @@ def test_docker_compose_and_env_not_expose_official_ids() -> None:
         "compose.test.yaml",
         ".env.example",
         "Dockerfile",
-        "Dockerfile.astrbot",
     ):
         path = REPO / filename
         if not path.exists():
