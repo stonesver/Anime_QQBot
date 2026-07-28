@@ -32,6 +32,20 @@ class Settings(BaseSettings):
     processed_event_retention_days: Annotated[int, Field(gt=0)] = 7
     delivery_retention_days: Annotated[int, Field(gt=0)] = 90
 
+    # v0.3 is introduced behind release switches so a production upgrade keeps
+    # the v0.2 command surface until the operator explicitly enables each seam.
+    interaction_gateway_enabled: bool = False
+    send_governor_enabled: bool = False
+    admin_page_writes_enabled: bool = False
+
+    send_global_interval_seconds: Annotated[float, Field(gt=0, le=60)] = 2.5
+    send_global_burst: Annotated[int, Field(ge=1, le=20)] = 2
+    send_group_interval_seconds: Annotated[float, Field(gt=0, le=300)] = 5
+    send_user_interval_seconds: Annotated[float, Field(gt=0, le=300)] = 5
+    send_user_limit_per_minute: Annotated[int, Field(ge=1, le=100)] = 10
+    send_proactive_group_interval_seconds: Annotated[float, Field(gt=0, le=3600)] = 60
+    send_proactive_group_limit_per_10_minutes: Annotated[int, Field(ge=1, le=100)] = 3
+
     @field_validator("bangumi_api_base_url")
     @classmethod
     def normalize_bangumi_api_base_url(cls, value: str) -> str:

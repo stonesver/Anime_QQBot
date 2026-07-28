@@ -22,6 +22,7 @@ from astrbot_plugin_anime_tracking.anime_tracking_plugin.lifecycle import (
 )
 
 SAMPLE_CHAT_GROUP_ID = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+SECOND_CHAT_GROUP_ID = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
 DB = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+asyncpg://anime:anime@127.0.0.1:55432/anime_test",
@@ -43,6 +44,7 @@ async def _clean() -> None:
         async with engine.begin() as conn:
             await conn.exec_driver_sql(
                 "TRUNCATE TABLE delivery_attempts, notification_jobs, worker_heartbeats, "
+                "delivery_controls, group_runtime_settings, "
                 "subscription_resource_filters, follow_subscriptions, "
                 "source_snapshots, anime_source_links, anime_titles, "
                 "airing_occurrences, external_entries, animes, "
@@ -67,7 +69,12 @@ def _ensure_db_url() -> None:
             os.environ["DATABASE_URL"] = prev
 
 
-async def _seed_chat_group(*, umo: str | None) -> None:
+async def _seed_chat_group(
+    *,
+    umo: str | None,
+    chat_group_id: UUID = SAMPLE_CHAT_GROUP_ID,
+    external_group_id: str = "42",
+) -> None:
     from anime_qqbot.persistence.models.identity import ChatGroup
 
     engine = create_async_engine(DB)
@@ -75,9 +82,9 @@ async def _seed_chat_group(*, umo: str | None) -> None:
         async with async_sessionmaker(engine, expire_on_commit=False)() as s, s.begin():
             s.add(
                 ChatGroup(
-                    id=SAMPLE_CHAT_GROUP_ID,
+                    id=chat_group_id,
                     platform="qq",
-                    external_group_id="42",
+                    external_group_id=external_group_id,
                     unified_msg_origin=umo,
                     timezone="Asia/Shanghai",
                     enabled=True,
@@ -89,7 +96,11 @@ async def _seed_chat_group(*, umo: str | None) -> None:
         await engine.dispose()
 
 
-async def _seed_job(*, job_type: str = "airing") -> UUID:
+async def _seed_job(
+    *,
+    job_type: str = "airing",
+    chat_group_id: UUID = SAMPLE_CHAT_GROUP_ID,
+) -> UUID:
     from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 
     job_id = uuid4()
@@ -99,7 +110,7 @@ async def _seed_job(*, job_type: str = "airing") -> UUID:
             s.add(
                 NotificationJob(
                     id=job_id,
-                    chat_group_id=SAMPLE_CHAT_GROUP_ID,
+                    chat_group_id=chat_group_id,
                     job_type=job_type,
                     business_key=f"test-{job_id}",
                     payload={
@@ -163,7 +174,7 @@ async def test_dispatcher_marks_failed_when_send_raises(_clean: None) -> None:
     await lc.start()
     d = OutboxDispatcher(lifecycle=lc)
     await d._tick()  # type: ignore[reportPrivateUsage]
-    assert await _read_status(job_id, lc.sessions) == "retry"
+    assert await _read_status(job_id, lc.sessions) == "pending"
     await d.stop()
     await lc.shutdown()
 
@@ -178,7 +189,45 @@ async def test_dispatcher_skips_jobs_without_umo(_clean: None) -> None:
     d = OutboxDispatcher(lifecycle=lc)
     await d._tick()  # type: ignore[reportPrivateUsage]
     assert ctx.sent == []
-    assert await _read_status(job_id, lc.sessions) == "retry"
+    assert await _read_status(job_id, lc.sessions) == "pending"
+    await d.stop()
+    await lc.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_paused_group_does_not_block_later_group(_clean: None) -> None:
+    from anime_qqbot.notifications.control import DeliveryControlRepository
+
+    await _seed_chat_group(umo="umo-paused")
+    paused_job_id = await _seed_job()
+    await _seed_chat_group(
+        umo="umo-active",
+        chat_group_id=SECOND_CHAT_GROUP_ID,
+        external_group_id="84",
+    )
+    active_job_id = await _seed_job(chat_group_id=SECOND_CHAT_GROUP_ID)
+    ctx = FakeContext()
+    lc = PluginLifecycle(
+        context=ctx,
+        config={"send_governor_enabled": True},
+        start_dispatcher=False,
+    )
+    await lc.start()
+    controls = DeliveryControlRepository(lc.sessions)
+    await controls.pause(
+        "group",
+        "42",
+        reason="maintenance",
+        now=datetime.now(UTC),
+    )
+
+    d = OutboxDispatcher(lifecycle=lc)
+    await d._tick()  # type: ignore[reportPrivateUsage]
+
+    assert len(ctx.sent) == 1
+    assert ctx.sent[0][0] == "umo-active"
+    assert await _read_status(paused_job_id, lc.sessions) == "pending"
+    assert await _read_status(active_job_id, lc.sessions) == "sent"
     await d.stop()
     await lc.shutdown()
 

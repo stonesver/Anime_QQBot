@@ -134,8 +134,11 @@ async def today_listing(
             display_title=anime.display_title,
             nsfw_flag=anime.nsfw_flag,
             disabled=anime.disabled,
+            air_date=occ.air_date,
+            air_at=occ.air_at,
+            episode_label=occ.episode_label,
         )
-        for _, anime in rows
+        for occ, anime in rows
     )
     return QueryResult(kind=IntentKind.TODAY, rows=anime_rows)
 
@@ -165,8 +168,11 @@ async def week_listing(
             display_title=anime.display_title,
             nsfw_flag=anime.nsfw_flag,
             disabled=anime.disabled,
+            air_date=occ.air_date,
+            air_at=occ.air_at,
+            episode_label=occ.episode_label,
         )
-        for _, anime in rows
+        for occ, anime in rows
     )
     return QueryResult(kind=IntentKind.WEEK, rows=anime_rows)
 
@@ -484,6 +490,39 @@ async def claim_pending_jobs(
         return [row.id for row in rows]
 
 
+async def claim_pending_job(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    job_id: UUID,
+    consumer: str,
+    now: datetime | None = None,
+) -> bool:
+    """Claim one preflight-selected job without leasing unrelated work."""
+    now = now or _now_utc()
+    async with sessions() as session:
+        row = (
+            await session.execute(
+                select(NotificationJob)
+                .where(
+                    NotificationJob.id == job_id,
+                    NotificationJob.status == "pending",
+                    NotificationJob.available_at <= now,
+                    NotificationJob.expires_at > now,
+                )
+                .with_for_update(skip_locked=True)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            return False
+        row.status = "leased"
+        row.lease_owner = consumer
+        row.leased_at = now
+        row.attempt_count += 1
+        row.updated_at = now
+        await session.commit()
+        return True
+
+
 async def complete_job(
     sessions: async_sessionmaker[AsyncSession],
     *,
@@ -508,7 +547,11 @@ async def complete_job(
                 attempted_at=now,
             )
         )
-        job.status = result
+        # A retry outcome belongs to the attempt. The durable job must return
+        # to pending with a small backoff or it can never be claimed again.
+        job.status = "pending" if result == "retry" else result
+        if result == "retry":
+            job.available_at = now + timedelta(seconds=30)
         job.lease_owner = None
         job.leased_at = None
         job.updated_at = now
@@ -545,6 +588,7 @@ def utcnow() -> datetime:
 __all__ = [
     "QueryResult",
     "SubscribeResult",
+    "claim_pending_job",
     "claim_pending_jobs",
     "complete_job",
     "detail_for",

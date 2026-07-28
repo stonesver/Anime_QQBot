@@ -35,7 +35,7 @@ def test_restore_targets_only_v02_runtime_services() -> None:
     text = Path("scripts/restore-postgres.sh").read_text()
 
     assert "stop worker astrbot napcat" in text
-    assert "0011_complete_mikan_pipeline (head)" in text
+    assert "0012_interaction_delivery_admin (head)" in text
     assert " bot " not in text
 
 

@@ -7,8 +7,8 @@ the correct chat group.
 The dispatcher uses the use cases from ``anime_qqbot.application``
 to claim and complete jobs:
 
-* ``claim_pending_jobs(sessions, consumer=...)`` performs the
-  ``FOR UPDATE SKIP LOCKED`` claim and returns leased job ids.
+* ``claim_pending_job(sessions, job_id=..., consumer=...)`` performs the
+  exact ``FOR UPDATE SKIP LOCKED`` claim after delivery preflight.
 * The dispatcher's send loop looks up the chat group's UMO via
   ``groups.repository_v2`` and invokes ``context.send_message``.
 * ``complete_job(sessions, job_id, result, summary)`` writes the
@@ -33,14 +33,19 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.application import (
-    claim_pending_jobs,
+    claim_pending_job,
     complete_job,
     release_expired_leases,
 )
+from anime_qqbot.groups.settings import GroupRuntimeSettingsRepository
+from anime_qqbot.notifications.control import DeliveryControlRepository
+from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
+from anime_qqbot.notifications.outcomes import DeliveryOutcomeKind
 from anime_qqbot.persistence.models.identity import ChatGroup
 from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 from anime_qqbot.persistence.models.runtime import WorkerHeartbeat
 
+from .delivery_adapter import classify_delivery_exception
 from .lifecycle import PluginLifecycle
 from .rendering import (
     render_airing_notification,
@@ -107,21 +112,84 @@ class OutboxDispatcher:
             )
         # 1. Reclaim any leased jobs whose lease expired (recovery path).
         await release_expired_leases(sessions, now=now)
-        # 2. Claim new work.
-        claimed = await claim_pending_jobs(
-            sessions, consumer="astrbot-dispatcher", limit=10, now=now
+        # 2. Reserve capacity before claiming. This keeps queued jobs durable
+        # instead of leasing a burst of work into process memory.
+        job_id = await self._reserve_next_capacity(sessions, now)
+        if job_id is None:
+            return
+        # 3. Claim the exact preflight-selected job.
+        claimed = await claim_pending_job(
+            sessions,
+            job_id=job_id,
+            consumer="astrbot-dispatcher",
+            now=now,
         )
-        for job_id in claimed:
-            try:
-                await self._deliver(job_id, sessions, now)
-            except Exception:
-                logger.exception("delivery failed for job %s", job_id)
-                await complete_job(
-                    sessions,
-                    job_id=job_id,
-                    result="retry",
-                    summary="delivery raised",
+        if not claimed:
+            return
+        try:
+            await self._deliver(job_id, sessions, now)
+        except Exception:
+            logger.exception("delivery failed for job %s", job_id)
+            await complete_job(
+                sessions,
+                job_id=job_id,
+                result="retry",
+                summary="delivery raised",
+            )
+
+    async def _reserve_next_capacity(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        now: datetime,
+    ) -> UUID | None:
+        if not bool(self._lifecycle.config.get("send_governor_enabled", False)):
+            async with sessions() as session:
+                candidate = (
+                    await session.execute(
+                        select(NotificationJob.id)
+                        .where(
+                            NotificationJob.status == "pending",
+                            NotificationJob.available_at <= now,
+                            NotificationJob.expires_at > now,
+                        )
+                        .order_by(
+                            NotificationJob.available_at,
+                            NotificationJob.created_at,
+                        )
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                return candidate
+        async with sessions() as session:
+            rows = (
+                await session.execute(
+                    select(NotificationJob, ChatGroup)
+                    .join(ChatGroup, ChatGroup.id == NotificationJob.chat_group_id)
+                    .where(
+                        NotificationJob.status == "pending",
+                        NotificationJob.available_at <= now,
+                        NotificationJob.expires_at > now,
+                    )
+                    .order_by(NotificationJob.available_at, NotificationJob.created_at)
+                    .limit(50)
                 )
+            ).all()
+        controls = DeliveryControlRepository(sessions)
+        policies = GroupRuntimeSettingsRepository(sessions)
+        for job, group in rows:
+            if not await controls.permits_group(group.external_group_id):
+                continue
+            policy = await policies.get_policy(group.id)
+            if not policy.proactive_enabled or policy.is_quiet_at(now):
+                continue
+            delivery_class = (
+                DeliveryClass.RELEASE if job.job_type == "release" else DeliveryClass.AIRING
+            )
+            if self._lifecycle.governor.acquire(
+                SendRequest(delivery_class, group.external_group_id)
+            ).allowed:
+                return UUID(str(job.id))
+        return None
 
     async def _deliver(
         self,
@@ -155,11 +223,29 @@ class OutboxDispatcher:
         try:
             await self._send_message(umo, message_chain)
         except Exception as exc:
+            outcome = classify_delivery_exception(exc)
+            controls = DeliveryControlRepository(sessions)
+            if outcome.kind == DeliveryOutcomeKind.ACCOUNT_OFFLINE:
+                await controls.open_circuit(
+                    "global",
+                    "global",
+                    error=outcome.summary,
+                    now=now,
+                    failure_count=1,
+                )
+            elif outcome.kind == DeliveryOutcomeKind.RATE_LIMITED:
+                await controls.open_circuit(
+                    "group",
+                    chat_group.external_group_id,
+                    error=outcome.summary,
+                    now=now,
+                    failure_count=1,
+                )
             await complete_job(
                 sessions,
                 job_id=job_id,
-                result="retry",
-                summary=f"send failed: {exc}",
+                result="retry" if outcome.retryable else "failed",
+                summary=outcome.summary,
             )
             return
 

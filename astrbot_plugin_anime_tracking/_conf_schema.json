@@ -8,5 +8,55 @@
     "type": "float",
     "default": 3.0,
     "description": "通知 Outbox 的轮询间隔（秒）。"
+  },
+  "interaction_gateway_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "启用 @机器人 与群短命令入口。升级后先在测试群灰度。"
+  },
+  "send_governor_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "启用统一发送限频与持久化熔断。"
+  },
+  "admin_page_writes_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "允许机器人所有者通过内嵌管理页执行写操作。"
+  },
+  "send_global_interval_seconds": {
+    "type": "float",
+    "default": 2.5,
+    "description": "全局相邻消息最小间隔（秒）。"
+  },
+  "send_global_burst": {
+    "type": "int",
+    "default": 2,
+    "description": "全局瞬时发送容量。"
+  },
+  "send_group_interval_seconds": {
+    "type": "float",
+    "default": 5.0,
+    "description": "同一群相邻消息最小间隔（秒）。"
+  },
+  "send_user_interval_seconds": {
+    "type": "float",
+    "default": 5.0,
+    "description": "同一用户相邻被动请求最小间隔（秒）。"
+  },
+  "send_user_limit_per_minute": {
+    "type": "int",
+    "default": 10,
+    "description": "单用户每分钟最多触发次数。"
+  },
+  "send_proactive_group_interval_seconds": {
+    "type": "float",
+    "default": 60.0,
+    "description": "同一群主动提醒最小间隔（秒）。"
+  },
+  "send_proactive_group_limit_per_10_minutes": {
+    "type": "int",
+    "default": 3,
+    "description": "同一群每十分钟最多主动提醒次数。"
   }
 }

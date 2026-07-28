@@ -1,4 +1,4 @@
-"""AstrBot plugin: anime_tracking (v0.2.0).
+"""AstrBot plugin: anime_tracking (v0.3.0).
 
 This plugin bridges NapCat (OneBot 11) group events to the Anime Core
 application layer. It follows the AstrBot Star plugin contract:
@@ -34,6 +34,9 @@ except ModuleNotFoundError:
     MessageEventResult = Any  # type: ignore[misc]
 
     class _FakeFilter:
+        class EventMessageType:
+            GROUP_MESSAGE = "group_message"
+
         @staticmethod
         def command(_name: str) -> Any:
             return lambda fn: fn
@@ -46,6 +49,10 @@ except ModuleNotFoundError:
         def on_astrbot_loaded() -> Any:
             return lambda fn: fn
 
+        @staticmethod
+        def event_message_type(_kind: Any) -> Any:
+            return lambda fn: fn
+
     class _FakeGroup:
         def __call__(self, fn: Any) -> Any:
             return self
@@ -56,18 +63,25 @@ except ModuleNotFoundError:
     filter = _FakeFilter()  # type: ignore[misc]  # noqa: A001
 
 
+from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
+
 from .anime_tracking_plugin.adapter import EventAdapter
+from .anime_tracking_plugin.admin_api import AdminWebAPI
+from .anime_tracking_plugin.event_envelope import from_astrbot_event
+from .anime_tracking_plugin.interaction_gateway import InteractionGateway
 from .anime_tracking_plugin.lifecycle import PluginLifecycle
 
 
 class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
-    def __init__(self, context: Context) -> None:
+    def __init__(self, context: Context, config: dict[str, Any] | None = None) -> None:
         super().__init__(context)
+        self._config = config or {}
         self._lifecycle: PluginLifecycle | None = None
+        self._admin_api = AdminWebAPI(context, self._ensure_lifecycle)
 
     async def _ensure_lifecycle(self) -> PluginLifecycle:
         if self._lifecycle is None:
-            self._lifecycle = PluginLifecycle(self.context)
+            self._lifecycle = PluginLifecycle(self.context, config=self._config)
             await self._lifecycle.start()
         return self._lifecycle
 
@@ -87,25 +101,36 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
         Individual subcommand handlers receive ``event`` unchanged
         and delegate to the ``EventAdapter`` after extraction.
         """
-        _ = event  # the group decorator keeps routes registered
-        return
+        yield event.plain_result(
+            "可用入口：今日番剧、本周番剧、搜番 <关键词>、追番 <关键词>、"
+            "退订 <关键词>、我的追番。完整命令请发送 /番剧 帮助"
+        )
+
+    @filter.event_message_type(  # type: ignore[misc]
+        filter.EventMessageType.GROUP_MESSAGE  # type: ignore[attr-defined]
+    )
+    async def _handle_group_message(self, event: AstrMessageEvent) -> MessageEventResult:
+        """Handle @ and explicitly enabled direct shortcuts.
+
+        Slash commands remain owned by the command-group decorators so one
+        incoming message can never receive duplicate replies.
+        """
+        if str(getattr(event, "message_str", "")).strip().startswith("/番剧"):
+            return
+        lifecycle = await self._ensure_lifecycle()
+        result = await InteractionGateway(lifecycle).route(from_astrbot_event(event))
+        if not result.matched:
+            return
+        if result.stop_propagation:
+            stopper = getattr(event, "stop_event", None)
+            if callable(stopper):
+                stopper()
+        if result.text:
+            yield event.plain_result(result.text)
 
     @_group_route.command("帮助")  # type: ignore[union-attr]
     async def _handle_help(self, event: AstrMessageEvent) -> MessageEventResult:
-        lifecycle = await self._ensure_lifecycle()
-        adapter = self._build_adapter(lifecycle)
-        reply = await adapter.handle_message(
-            platform="qq",
-            group_id=self._group_id(event),
-            user_id=self._sender_id(event),
-            display_name=self._sender_name(event),
-            unified_msg_origin=self._umo(event),
-            content=event.message_str,
-        )
-        if reply.blocks:
-            yield event.plain_result(reply.blocks[0].text)
-        elif reply.error:
-            yield event.plain_result(f"错误: {reply.error}")
+        yield event.plain_result(await self._dispatch(event))
 
     @_group_route.command("今天")  # type: ignore[union-attr]
     async def _handle_today(self, event: AstrMessageEvent) -> MessageEventResult:
@@ -173,6 +198,16 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
 
     async def _dispatch(self, event: AstrMessageEvent) -> str:
         lifecycle = await self._ensure_lifecycle()
+        if bool(self._config.get("send_governor_enabled", False)):
+            permit = lifecycle.governor.acquire(
+                SendRequest(
+                    DeliveryClass.INTERACTIVE,
+                    self._group_id(event),
+                    self._sender_id(event),
+                )
+            )
+            if not permit.allowed:
+                return f"请求有点快，请 {max(1, round(permit.retry_after_seconds))} 秒后再试。"
         adapter = self._build_adapter(lifecycle)
         reply = await adapter.handle_message(
             platform="qq",
@@ -181,11 +216,13 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
             display_name=self._sender_name(event),
             unified_msg_origin=self._umo(event),
             content=event.message_str,
+            is_admin=getattr(event, "role", "member") == "admin",
         )
         if reply.blocks:
             return reply.blocks[0].text
         if reply.candidates:
-            return "多个结果, 请通过内部 ID 选择:\n" + "\n".join(reply.candidates)
+            rows = [f"{index}. {title}" for index, title in enumerate(reply.candidates, 1)]
+            return "找到多个结果，请回复“看 编号 / 追番 编号”：\n" + "\n".join(rows)
         if reply.error:
             return f"错误: {reply.error}"
         return "（无内容）"

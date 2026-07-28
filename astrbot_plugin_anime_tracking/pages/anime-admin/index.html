@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>番剧放送控制台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">ANIME SIGNAL DESK</p>
+          <h1>番剧放送控制台</h1>
+          <p class="lede">看清来源、订阅与发送状态，再决定是否操作。</p>
+        </div>
+        <div class="live-mark" aria-label="控制台连接状态">
+          <span class="live-dot" aria-hidden="true"></span>
+          <span id="connection-label">正在连接 AstrBot</span>
+        </div>
+      </header>
+
+      <div class="broadcast-strip" aria-hidden="true">
+        <span>Bangumi</span><i></i><span>AniList</span><i></i><span>Mikan</span>
+        <b>→</b><span>订阅</span><b>→</b><span>群提醒</span>
+      </div>
+
+      <nav class="tabs" aria-label="管理区域">
+        <button class="tab active" data-view="overview">总览</button>
+        <button class="tab" data-view="groups">群设置</button>
+        <button class="tab" data-view="subscriptions">订阅</button>
+        <button class="tab" data-view="mappings">映射</button>
+        <button class="tab" data-view="notifications">通知</button>
+        <button class="tab" data-view="sources">数据源</button>
+      </nav>
+
+      <main>
+        <section id="view-overview" class="view active" aria-labelledby="overview-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">现在</p>
+              <h2 id="overview-title">运行态势</h2>
+            </div>
+            <button class="button ghost" data-action="refresh">刷新</button>
+          </div>
+          <div id="overview-grid" class="metric-grid" aria-live="polite"></div>
+          <article class="panel control-panel">
+            <div>
+              <h3>主动发送总闸</h3>
+              <p>暂停只影响开播和 Mikan 提醒，不影响群内查询。</p>
+            </div>
+            <div class="action-row">
+              <button class="button danger" data-action="pause-delivery">暂停主动发送</button>
+              <button class="button" data-action="resume-delivery">恢复主动发送</button>
+            </div>
+          </article>
+        </section>
+
+        <section id="view-groups" class="view" aria-labelledby="groups-title">
+          <div class="section-heading">
+            <div><p class="section-kicker">入口与提醒</p><h2 id="groups-title">群设置</h2></div>
+            <label class="search"><span>筛选</span><input id="group-query" type="search" placeholder="输入群号" /></label>
+          </div>
+          <div id="groups-content" class="table-wrap"></div>
+        </section>
+
+        <section id="view-subscriptions" class="view" aria-labelledby="subscriptions-title">
+          <div class="section-heading">
+            <div><p class="section-kicker">谁在追什么</p><h2 id="subscriptions-title">订阅</h2></div>
+            <label class="search"><span>筛选</span><input id="subscription-query" type="search" placeholder="群、用户或番剧" /></label>
+          </div>
+          <div id="subscriptions-content" class="table-wrap"></div>
+        </section>
+
+        <section id="view-mappings" class="view" aria-labelledby="mappings-title">
+          <div class="section-heading">
+            <div><p class="section-kicker">跨源校对</p><h2 id="mappings-title">待确认映射</h2></div>
+          </div>
+          <div id="mappings-content" class="table-wrap"></div>
+        </section>
+
+        <section id="view-notifications" class="view" aria-labelledby="notifications-title">
+          <div class="section-heading">
+            <div><p class="section-kicker">投递队列</p><h2 id="notifications-title">通知</h2></div>
+            <label class="search"><span>状态</span>
+              <select id="notification-status">
+                <option value="">全部</option><option value="pending">等待</option>
+                <option value="failed">失败</option><option value="retry">待重试</option>
+                <option value="unknown">未知</option><option value="sent">已发送</option>
+              </select>
+            </label>
+          </div>
+          <div id="notifications-content" class="table-wrap"></div>
+        </section>
+
+        <section id="view-sources" class="view" aria-labelledby="sources-title">
+          <div class="section-heading">
+            <div><p class="section-kicker">上游脉搏</p><h2 id="sources-title">数据源与任务</h2></div>
+            <button class="button" data-action="sync-catalog">立即同步目录</button>
+          </div>
+          <div id="sources-content" class="source-grid"></div>
+          <h3 class="subheading">最近管理任务</h3>
+          <div id="jobs-content" class="table-wrap"></div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="confirm-dialog">
+      <form method="dialog">
+        <p class="section-kicker">确认操作</p>
+        <h2 id="confirm-title">请确认</h2>
+        <p id="confirm-message"></p>
+        <div class="action-row dialog-actions">
+          <button value="cancel" class="button ghost">取消</button>
+          <button value="confirm" class="button danger">确认执行</button>
+        </div>
+      </form>
+    </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

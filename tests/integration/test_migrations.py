@@ -1,4 +1,4 @@
-"""Migration round-trip tests for v0.2.0 schema.
+"""Migration round-trip tests for the current schema.
 
 Each test wipes the database, runs its scenario, and re-applies
 the migrations to ``head`` so that downstream tests can still
@@ -130,6 +130,11 @@ def test_empty_database_base_to_head() -> None:
     assert _run(_has_table("release_batches"))
     assert _run(_has_table("release_batch_items"))
     assert _run(_has_table("mikan_feed_states"))
+    assert _run(_has_table("group_runtime_settings"))
+    assert _run(_has_table("interaction_sessions"))
+    assert _run(_has_table("delivery_controls"))
+    assert _run(_has_table("operator_jobs"))
+    assert _run(_has_table("admin_audit_events"))
 
 
 def test_head_round_trip() -> None:
@@ -144,6 +149,11 @@ def test_head_round_trip() -> None:
     assert not _run(_has_table("anime_subjects"))
     assert _run(_has_table("release_batch_items"))
     assert _run(_has_table("mikan_feed_states"))
+    assert _run(_has_table("group_runtime_settings"))
+    assert _run(_has_table("interaction_sessions"))
+    assert _run(_has_table("delivery_controls"))
+    assert _run(_has_table("operator_jobs"))
+    assert _run(_has_table("admin_audit_events"))
 
 
 def test_0004_snapshot_forward() -> None:

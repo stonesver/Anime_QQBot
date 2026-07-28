@@ -30,7 +30,7 @@ async def render_reply(reply: Reply, event: Any) -> Any:
     return text  # tests assert on the returned plain text
 
 
-def render_airing_notification(payload: dict) -> list[Any]:
+def render_airing_notification(payload: dict[str, Any]) -> list[Any]:
     """Render an airing notification into an AstrBot message chain.
 
     Returns a list with ``[At(segment=user_ids), Plain(text=summary)]``
@@ -48,7 +48,7 @@ def render_airing_notification(payload: dict) -> list[Any]:
     return chain
 
 
-def render_release_batch(payload: dict) -> list[Any]:
+def render_release_batch(payload: dict[str, Any]) -> list[Any]:
     """Render a release batch notification into a message chain.
 
     The first 5 releases are listed explicitly; additional releases

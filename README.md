@@ -1,19 +1,24 @@
-# anime-qqbot v0.2.0
+# anime-qqbot v0.3.0
 
 AstrBot 多源群聊追番服务：通过 NapCat (OneBot 11) + AstrBot 接入普通 QQ 小号，
-提供群内固定命令查询、订阅追番、预计放送提醒和 Mikan 资源更新通知。
+提供群内固定命令、@机器人和安全短命令查询，支持订阅追番、预计放送提醒、Mikan
+资源更新通知，以及 AstrBot 内嵌运维控制台。
 
-当前状态：v0.2.0 代码与自动化验收已完成，生产镜像采用 ACR 单镜像发布。首次部署仍需
-在 AstrBot WebUI 完成一次 OneBot 适配器配置，并在真实测试群执行 canary。
+当前状态：v0.3.0 开发候选版，生产镜像继续采用 ACR 单镜像发布。升级后新交互、发送
+治理和管理写入默认关闭，需在测试群分阶段打开并执行 canary。
 
 ## 核心功能
 
 - 今日本周季度查询、搜索、详情、下一次预计放送；
-- 群内用户通过内部 Anime ID 订阅与取消；
+- `/番剧`、`@机器人` 和可按群开启的安全短命令；
+- 搜索结果使用 1..N 候选编号，不向群成员暴露内部 UUID；
+- 群内用户管理自己的订阅；QQ 群主/管理员不获得机器人配置权限；
 - Bangumi + AniList 双源数据融合与字段投影；
 - 精确时刻预计放送提醒 + `@` 订阅用户；
 - Mikan RSS 资源发布聚合、字幕组/语言/分辨率筛选；
 - 通知 Outbox（租约、重试、过期清理）；
+- 统一发送限频、主动提醒防突发和持久化熔断；
+- 仅 AstrBot Dashboard 管理员可用的内嵌运维页；
 - PostgreSQL 持久化，Docker Compose 五单元部署。
 
 ## 架构
@@ -25,13 +30,16 @@ QQ小号 → NapCat/OneBot 11 → AstrBot → Anime Plugin → Anime Core → Po
                                         Bangumi / AniList / Mikan
 ```
 
-首版不包含 QQ 官方机器人、Web 管理后台、大模型依赖或自动下载。
+本项目不包含 QQ 官方机器人、大模型依赖或自动下载。管理页嵌入 AstrBot WebUI，
+不新增独立 Web 服务或公网端口。
 
 ## 文档
 
 - [部署指南](docs/deployment.md)
 - [运维手册](docs/operations.md)
 - [v0.2.0 验收报告](docs/acceptance/v0.2.0.md)
+- [v0.3.0 验收报告](docs/acceptance/v0.3.0.md)
+- [v0.3.0 群交互与管理设计](docs/superpowers/specs/2026-07-28-anime-chat-interaction-admin-panel-design.md)
 - [多源追番系统设计](docs/superpowers/specs/2026-07-26-astrbot-multisource-anime-tracking-design.md)
 - [实施计划](docs/superpowers/plans/2026-07-27-astrbot-multisource-anime-tracking-implementation-plan.md)
 - [领域词汇](CONTEXT.md)

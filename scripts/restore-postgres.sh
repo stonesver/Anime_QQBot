@@ -36,7 +36,7 @@ docker compose exec -T postgres psql \
   --set ON_ERROR_STOP=1 < "$raw"
 docker compose run --rm --no-deps migrate
 docker compose run --rm --no-deps --entrypoint /bin/sh migrate \
-  -c 'alembic current | grep -q "0011_complete_mikan_pipeline (head)"'
+  -c 'alembic current | grep -q "0012_interaction_delivery_admin (head)"'
 
 if [ "${RESTORE_SKIP_APP_START:-0}" != "1" ]; then
   docker compose up -d --no-build --no-deps --wait worker astrbot napcat

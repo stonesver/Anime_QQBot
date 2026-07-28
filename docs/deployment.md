@@ -1,4 +1,4 @@
-# v0.2.0 单镜像 ACR 部署指南
+# v0.3.0 单镜像 ACR 部署指南
 
 ## 部署边界
 
@@ -65,7 +65,7 @@ POSTGRES_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stones
 NAPCAT_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.18.13
 COMPOSE_FILE=compose.yaml:compose.server-2g.yaml
 POSTGRES_PASSWORD=<现有 anime 数据库角色密码>
-BANGUMI_USER_AGENT=anime-qqbot/0.2.0 (your-email@example.com)
+BANGUMI_USER_AGENT=anime-qqbot/0.3.0 (your-email@example.com)
 ONEBOT_TOKEN=<至少 24 位 URL 安全随机字符>
 ```
 
@@ -117,6 +117,32 @@ ssh -p 2222 \
    `ws://astrbot:6199/ws`。
 4. 查看 `docker compose logs -f napcat astrbot`，确认反向 WebSocket 已连接。
 5. 把小号加入测试群，发送 `/番剧 帮助`。
+
+### v0.3 分阶段开关
+
+进入 AstrBot 的 `anime_tracking` 插件配置，先在测试群按以下顺序开启：
+
+1. `interaction_gateway_enabled=true`：启用 @机器人入口；新群短命令仍默认关闭。
+2. `send_governor_enabled=true`：启用查询和主动提醒的统一限频。
+3. `admin_page_writes_enabled=true`：确认管理页只经 SSH 隧道访问后，允许写操作。
+
+打开插件详情中的“番剧放送控制台”即可进入管理页。页面通过 AstrBot Dashboard
+认证和 Plugin Page bridge 工作，不需要 Nginx。机器人设置权限只认 AstrBot 事件
+角色 `admin`；QQ 群主和群管理员没有额外权限。
+
+测试群中建议依次验证：
+
+```text
+@机器人 今天有什么番
+@机器人 搜番 芙莉莲
+@机器人 开启短命令
+今日番剧
+搜番 芙莉莲
+追番 1
+我的追番
+```
+
+未明确开启短命令的群，只响应 `/番剧 ...` 与 @机器人，不扫描普通聊天正文。
 
 6185、6099 不应加入 Nginx，也不应在云安全组开放。AstrBot 不同补丁版本的 WebUI
 字段名称可能略有差别，以 `aiocqhttp`、反向 WebSocket 监听端口和 Access Token

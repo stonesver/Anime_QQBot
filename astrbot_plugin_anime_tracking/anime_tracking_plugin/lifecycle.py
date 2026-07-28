@@ -21,6 +21,7 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from anime_qqbot.notifications.governor import GovernorLimits, SendGovernor
 from anime_qqbot.persistence.session import create_engine, create_session_factory
 
 logger = logging.getLogger(__name__)
@@ -34,14 +35,22 @@ class PluginLifecycle:
     tests a fake context with the same interface can be used.
     """
 
-    def __init__(self, context: Any = None, *, start_dispatcher: bool = True) -> None:
+    def __init__(
+        self,
+        context: Any = None,
+        *,
+        config: dict[str, Any] | None = None,
+        start_dispatcher: bool = True,
+    ) -> None:
         self._context = context
+        self.config = config or {}
         self._start_dispatcher_enabled = start_dispatcher
         self._running = False
         self._tasks: list[asyncio.Task[object]] = []
         self._engine: AsyncEngine | None = None
         self.sessions: async_sessionmaker[AsyncSession] | None = None
         self.dispatcher: Any | None = None
+        self.governor = SendGovernor(limits=self._governor_limits())
 
     @classmethod
     def from_context(cls, context: Any) -> PluginLifecycle:
@@ -103,6 +112,25 @@ class PluginLifecycle:
     @property
     def running(self) -> bool:
         return self._running
+
+    def _governor_limits(self) -> GovernorLimits:
+        def number(name: str, default: float) -> float:
+            return float(self.config.get(name, default))
+
+        def integer(name: str, default: int) -> int:
+            return int(self.config.get(name, default))
+
+        return GovernorLimits(
+            global_interval_seconds=number("send_global_interval_seconds", 2.5),
+            global_burst=integer("send_global_burst", 2),
+            group_interval_seconds=number("send_group_interval_seconds", 5),
+            user_interval_seconds=number("send_user_interval_seconds", 5),
+            user_limit_per_minute=integer("send_user_limit_per_minute", 10),
+            proactive_group_interval_seconds=number("send_proactive_group_interval_seconds", 60),
+            proactive_group_limit_per_10_minutes=integer(
+                "send_proactive_group_limit_per_10_minutes", 3
+            ),
+        )
 
 
 __all__ = ["PluginLifecycle"]

@@ -1,4 +1,4 @@
-"""CLI entrypoint for v0.2.0 anime tracking bot.
+"""CLI entrypoint for the anime tracking bot.
 
 Roles:
 * ``migrate`` — apply Alembic migrations to head.
@@ -41,9 +41,12 @@ from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
 from anime_qqbot.catalog.sync_anilist import AniListSyncService
 from anime_qqbot.clock import SystemClock
 from anime_qqbot.entrypoints.health import create_health_app
+from anime_qqbot.interactions.repository import InteractionSessionRepository
 from anime_qqbot.logging import configure_logging
 from anime_qqbot.notifications.outbox import OutboxRepository
 from anime_qqbot.notifications.planner_v2 import AiringEvent, AiringPlanner
+from anime_qqbot.operations.repository import OperatorJobRepository
+from anime_qqbot.operations.service import OperatorJobExecutor
 from anime_qqbot.persistence.models.catalog import (
     AiringOccurrenceRow,
     Anime,
@@ -453,6 +456,42 @@ async def run_worker() -> None:
     )
     health = asyncio.create_task(_serve_health(components.sessions))
     next_catalog_sync_at: datetime | None = None
+
+    async def operator_sync_catalog(_parameters: dict[str, object]) -> dict[str, object]:
+        discovered = await _discover_calendar_subjects(components, limit=100)
+        await _ingest_known_subjects(components, limit=100)
+        return {"discovered": discovered}
+
+    async def operator_poll_mikan(_parameters: dict[str, object]) -> dict[str, object]:
+        summary = await _drive_release_batches(components, components.clock.now())
+        return {
+            "polled": summary.feeds_polled,
+            "created_releases": summary.releases_created,
+        }
+
+    async def operator_projection(_parameters: dict[str, object]) -> dict[str, object]:
+        return {"updated": await _project_fresh_snapshots(components)}
+
+    async def operator_cleanup(_parameters: dict[str, object]) -> dict[str, object]:
+        deleted = await InteractionSessionRepository(components.sessions).cleanup_expired(
+            now=components.clock.now()
+        )
+        return {"deleted": deleted}
+
+    async def operator_retry(_parameters: dict[str, object]) -> dict[str, object]:
+        return {"accepted": True}
+
+    operator_jobs = OperatorJobExecutor(
+        OperatorJobRepository(components.sessions),
+        {
+            "sync_catalog": operator_sync_catalog,
+            "poll_mikan": operator_poll_mikan,
+            "rebuild_projection": operator_projection,
+            "cleanup_sessions": operator_cleanup,
+            "retry_delivery": operator_retry,
+        },
+        worker_id="worker-1",
+    )
     try:
         while True:
             now = components.clock.now()
@@ -490,6 +529,10 @@ async def run_worker() -> None:
                 )
             except Exception as exc:
                 logger.exception("worker.cleanup", extra={"error": str(exc)})
+            try:
+                await operator_jobs.run_one(now=now)
+            except Exception as exc:
+                logger.exception("worker.operator_job", extra={"error": str(exc)})
             await _record_heartbeat(
                 components.sessions,
                 worker_id="worker-1",

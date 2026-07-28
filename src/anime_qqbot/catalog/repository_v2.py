@@ -13,7 +13,7 @@ to project to chat users.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -49,6 +49,9 @@ class AnimeRow:
     display_title: str | None
     nsfw_flag: str
     disabled: bool
+    air_date: date | None = None
+    air_at: datetime | None = None
+    episode_label: str | None = None
 
 
 class CatalogWriteRepository:

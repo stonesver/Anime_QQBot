@@ -50,6 +50,8 @@ from anime_qqbot.application import (
     unsubscribe,
     week_listing,
 )
+from anime_qqbot.interactions.models import CandidateItem, InteractionScope
+from anime_qqbot.interactions.repository import InteractionSessionRepository
 
 # ---------------------------------------------------------------------------
 # Platform-neutral reply types
@@ -68,6 +70,7 @@ class Reply:
     kind: str = "text"
     blocks: list[ReplyBlock] = field(default_factory=list)
     candidates: list[str] = field(default_factory=list)
+    candidate_items: list[CandidateItem] = field(default_factory=list)
     at_user_ids: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -77,8 +80,18 @@ class Reply:
 
     @classmethod
     def from_candidates(cls, rows: tuple[Any, ...]) -> Reply:
-        cand = [f"{row.id} {row.display_title or row.id}" for row in rows]
-        return cls(kind="candidates", candidates=cand)
+        items = [
+            CandidateItem(
+                anime_id=row.id,
+                title=row.display_title or "未命名番剧",
+            )
+            for row in rows
+        ]
+        return cls(
+            kind="candidates",
+            candidates=[item.title for item in items],
+            candidate_items=items,
+        )
 
     @classmethod
     def from_error(cls, message: str) -> Reply:
@@ -118,31 +131,51 @@ def help_reply() -> Reply:
 UseCaseHandler = Callable[[ChatContext, Intent], Coroutine[Any, Any, Reply]]
 
 
-def _format_anime_row(row: Any) -> str:
+def _format_anime_row(row: Any, timezone: ZoneInfo | None = None) -> str:
     title = row.display_title or str(row.id)
     flag = "🔞" if row.nsfw_flag == "true" else ""
-    return f"• {title}{flag}"
+    schedule = ""
+    air_date = getattr(row, "air_date", None)
+    air_at = getattr(row, "air_at", None)
+    episode = getattr(row, "episode_label", None)
+    if air_date is not None:
+        weekday = "一二三四五六日"[air_date.weekday()]
+        time_label = (
+            air_at.astimezone(timezone or ZoneInfo("Asia/Shanghai")).strftime("%H:%M")
+            if air_at
+            else "日期待定"
+        )
+        episode_label = f" · 第{episode}集" if episode else ""
+        schedule = f"\n  周{weekday} {air_date:%m-%d} {time_label}{episode_label}"
+    return f"• {title}{flag}{schedule}"
 
 
 async def _query_to_reply(result: QueryResult, *, ctx: ChatContext) -> Reply:
     if result.kind == IntentKind.TODAY:
         if not result.rows:
             return Reply.from_text("今天没有即将放送的番剧")
-        body = "\n".join(_format_anime_row(r) for r in result.rows)
-        return Reply.from_text(f"今天 ({len(result.rows)} 部)\n{body}")
+        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
+        return Reply.from_text(
+            f"📺 今日放送 · {len(result.rows)} 部\n{body}\n\n可发送“搜番 名称”查看详情。"
+        )
     if result.kind == IntentKind.WEEK:
         if not result.rows:
             return Reply.from_text("本周没有即将放送的番剧")
-        body = "\n".join(_format_anime_row(r) for r in result.rows)
-        return Reply.from_text(f"本周 ({len(result.rows)} 部)\n{body}")
+        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
+        return Reply.from_text(
+            f"🗓 本周放送 · {len(result.rows)} 部\n{body}\n\n可发送“追番 名称”订阅提醒。"
+        )
     if result.kind == IntentKind.SEASON:
         if not result.rows:
             return Reply.from_text("该季度没有已收录的番剧")
-        body = "\n".join(_format_anime_row(r) for r in result.rows)
-        return Reply.from_text(f"季度番剧 ({len(result.rows)} 部)\n{body}")
+        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
+        return Reply.from_text(f"季度番剧 · {len(result.rows)} 部\n{body}")
     if result.kind == IntentKind.SEARCH:
         if result.detail is not None:
-            return Reply.from_text(_format_anime_row(result.detail))
+            title = result.detail.display_title or "该番剧"
+            return Reply.from_text(
+                f"{_format_anime_row(result.detail, ctx.timezone)}\n\n发送“追番 {title}”即可订阅。"
+            )
         if result.candidates:
             return Reply.from_candidates(result.candidates)
         return Reply.from_text("未找到匹配的番剧，请使用 /番剧 搜索 <关键词>")
@@ -151,18 +184,21 @@ async def _query_to_reply(result: QueryResult, *, ctx: ChatContext) -> Reply:
             return Reply.from_error("该番剧被屏蔽，不予展示")
         if result.detail is None:
             return Reply.from_text("找不到对应番剧")
-        return Reply.from_text(f"详情: {_format_anime_row(result.detail)}")
+        return Reply.from_text(
+            f"番剧详情\n{_format_anime_row(result.detail, ctx.timezone)}\n\n"
+            f"下一步：追番 {result.detail.display_title or ''}"
+        )
     if result.kind == IntentKind.NEXT:
         if result.blocked:
             return Reply.from_error("该番剧被屏蔽，不予展示")
         if result.detail is None:
             return Reply.from_text("找不到对应番剧")
         label = result.message or "暂无下一集"
-        return Reply.from_text(f"下一集: {label}\n{_format_anime_row(result.detail)}")
+        return Reply.from_text(f"下一集: {label}\n{_format_anime_row(result.detail, ctx.timezone)}")
     if result.kind == IntentKind.MY_SUBSCRIPTIONS:
         if not result.rows:
             return Reply.from_text("你当前没有订阅")
-        body = "\n".join(_format_anime_row(r) for r in result.rows)
+        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
         return Reply.from_text(f"我的订阅 ({len(result.rows)} 部)\n{body}")
     if result.kind == IntentKind.STATUS:
         return Reply.from_text(result.message or "暂无来源状态")
@@ -197,7 +233,7 @@ class EventAdapter:
     def __init__(
         self,
         *,
-        sessions: async_sessionmaker[AsyncSession],
+        sessions: async_sessionmaker[AsyncSession] | None,
         handlers: dict[IntentKind, UseCaseHandler] | None = None,
     ) -> None:
         self._sessions = sessions
@@ -239,13 +275,78 @@ class EventAdapter:
             return Reply.from_error(result.reason)
 
         intent = result
+        reply = await self.handle_intent(ctx=ctx, intent=intent, now=now)
+        if reply.candidate_items:
+            await self.persist_candidates(
+                ctx=ctx,
+                reply=reply,
+                now=now or _now(),
+            )
+        return reply
+
+    async def handle_intent(
+        self,
+        *,
+        ctx: ChatContext,
+        intent: Intent,
+        now: datetime | None = None,
+    ) -> Reply:
         if intent.kind == IntentKind.HELP:
             return help_reply()
+
+        if intent.selection_number is not None:
+            resolved = await self._resolve_selection(ctx, intent, now=now)
+            if isinstance(resolved, Reply):
+                return resolved
+            intent = resolved
 
         handler = self._handlers.get(intent.kind)
         if handler is None:
             return Reply.from_error(f"unknown intent: {intent.kind.value}")
         return await handler(ctx, intent)
+
+    async def persist_candidates(
+        self,
+        *,
+        ctx: ChatContext,
+        reply: Reply,
+        now: datetime,
+        result_message_id: str | None = None,
+    ) -> None:
+        if not reply.candidate_items:
+            return
+        if self._sessions is None:
+            return
+        await InteractionSessionRepository(self._sessions).replace(
+            InteractionScope(ctx.platform, ctx.group_id, ctx.user_id),
+            reply.candidate_items,
+            now=now,
+            result_message_id=result_message_id,
+        )
+
+    async def _resolve_selection(
+        self,
+        ctx: ChatContext,
+        intent: Intent,
+        *,
+        now: datetime | None,
+    ) -> Intent | Reply:
+        if self._sessions is None:
+            return Reply.from_error("数据库未配置")
+        session = await InteractionSessionRepository(self._sessions).resolve(
+            InteractionScope(ctx.platform, ctx.group_id, ctx.user_id),
+            now=now or _now(),
+        )
+        if session is None:
+            return Reply.from_error("候选结果已过期，请重新搜番")
+        candidate = session.candidate(intent.selection_number or 0)
+        if candidate is None:
+            return Reply.from_error("编号不在当前候选范围内")
+        return Intent(
+            kind=intent.kind,
+            anime_id=str(candidate.anime_id),
+            raw=intent.raw,
+        )
 
     async def _record_group_event(
         self,
@@ -257,7 +358,9 @@ class EventAdapter:
     ) -> None:
         from anime_qqbot.groups.repository_v2 import ChatGroupRepository, GroupEvent
 
-        repo = ChatGroupRepository(self._sessions)  # type: ignore[arg-type]
+        if self._sessions is None:
+            return
+        repo = ChatGroupRepository(self._sessions)
         await repo.upsert_group_event(
             GroupEvent(
                 platform=platform,
@@ -278,7 +381,17 @@ class EventAdapter:
         async def _today(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(await today_listing(s, now=_now()), ctx=ctx)
+            instant = _now()
+            if intent.query:
+                from datetime import date as date_type
+
+                selected = date_type.fromisoformat(intent.query)
+                instant = datetime.combine(
+                    selected,
+                    datetime.min.time(),
+                    tzinfo=ctx.timezone,
+                ).astimezone(UTC)
+            return await _query_to_reply(await today_listing(s, now=instant), ctx=ctx)
 
         async def _week(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:

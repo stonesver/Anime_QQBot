@@ -1,0 +1,27 @@
+from pathlib import Path
+
+PAGE = Path("astrbot_plugin_anime_tracking/pages/anime-admin")
+
+
+def test_plugin_page_is_discoverable_and_self_contained() -> None:
+    html = (PAGE / "index.html").read_text()
+    script = (PAGE / "app.js").read_text()
+    styles = (PAGE / "styles.css").read_text()
+
+    assert 'src="./app.js"' in html
+    assert 'href="./styles.css"' in html
+    assert "AstrBotPluginPage" in script
+    assert "apiGet" in script
+    assert "apiPost" in script
+    assert "http://" not in html + script + styles
+    assert "https://" not in html + script + styles
+
+
+def test_page_covers_all_operations_sections_and_mobile() -> None:
+    html = (PAGE / "index.html").read_text()
+    styles = (PAGE / "styles.css").read_text()
+
+    for label in ("总览", "群设置", "订阅", "映射", "通知", "数据源"):
+        assert label in html
+    assert "560px" in styles
+    assert "prefers-reduced-motion" in styles

@@ -1,6 +1,6 @@
 name: anime_tracking
 desc: AstrBot plugin for multi-source anime query, subscription and notification delivery.
-version: 0.2.0
+version: 0.3.0
 author: stonesver
 support_platforms:
   - aiocqhttp

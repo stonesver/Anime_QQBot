@@ -10,6 +10,7 @@ from anime_qqbot.application.module import (
 from anime_qqbot.application.use_cases import (
     QueryResult,
     SubscribeResult,
+    claim_pending_job,
     claim_pending_jobs,
     complete_job,
     detail_for,
@@ -34,6 +35,7 @@ __all__ = [
     "ParseFailure",
     "QueryResult",
     "SubscribeResult",
+    "claim_pending_job",
     "claim_pending_jobs",
     "complete_job",
     "detail_for",
