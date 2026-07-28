@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     catalog_cache_ttl_seconds: Annotated[int, Field(gt=0)] = 3600
     bangumi_data_sync_seconds: Annotated[int, Field(gt=0)] = 21600
     worker_scan_seconds: Annotated[int, Field(gt=0)] = 30
+    mikan_poll_seconds: Annotated[int, Field(gt=0)] = 300
+    mikan_batch_seconds: Annotated[int, Field(gt=0)] = 600
     daily_compensation_seconds: Annotated[int, Field(gt=0)] = 7200
     weekly_compensation_seconds: Annotated[int, Field(gt=0)] = 86400
     processed_event_retention_days: Annotated[int, Field(gt=0)] = 7

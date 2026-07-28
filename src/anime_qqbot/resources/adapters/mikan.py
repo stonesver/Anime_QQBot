@@ -10,9 +10,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from xml.etree.ElementTree import parse
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
+from defusedxml.common import DefusedXmlException
+from defusedxml.ElementTree import fromstring
 
 from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
 
@@ -25,6 +27,14 @@ class MikanItem:
     title: str
     pub_date: datetime
     page_url: str
+
+
+@dataclass(frozen=True)
+class MikanFeedResult:
+    items: tuple[MikanItem, ...]
+    etag: str | None
+    last_modified: str | None
+    not_modified: bool = False
 
 
 @dataclass
@@ -50,32 +60,52 @@ class MikanClient:
             )
         return self.client
 
-    async def fetch_feed(self, rss_url: str) -> list[MikanItem]:
+    async def fetch_feed(
+        self,
+        rss_url: str,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+    ) -> MikanFeedResult:
         """Fetch a public Mikan RSS feed and return parsed items."""
+        _validate_public_anime_feed(rss_url)
         client = self._http()
+        headers: dict[str, str] = {}
+        if etag:
+            headers["If-None-Match"] = etag
+        if last_modified:
+            headers["If-Modified-Since"] = last_modified
         try:
-            resp = await client.get(rss_url)
+            resp = await client.get(rss_url, headers=headers)
         except httpx.TransportError as exc:
             raise ProviderError(ProviderErrorKind.TEMPORARY, "mikan transport error") from exc
+        if resp.status_code == httpx.codes.NOT_MODIFIED:
+            return MikanFeedResult(
+                items=(),
+                etag=etag,
+                last_modified=last_modified,
+                not_modified=True,
+            )
         if resp.status_code >= 500:
             raise ProviderError(ProviderErrorKind.TEMPORARY, f"mikan {resp.status_code}")
         if resp.status_code >= 400:
             raise ProviderError(ProviderErrorKind.PERMANENT, f"mikan {resp.status_code}")
 
         try:
-            return self._parse_xml(resp.text)
-        except Exception as exc:
+            items = self._parse_xml(resp.text)
+        except (DefusedXmlException, ValueError) as exc:
             raise ProviderError(
                 ProviderErrorKind.INVALID_RESPONSE, f"mikan xml parse: {exc}"
             ) from exc
+        return MikanFeedResult(
+            items=tuple(items),
+            etag=resp.headers.get("ETag"),
+            last_modified=resp.headers.get("Last-Modified"),
+        )
 
     @staticmethod
     def _parse_xml(content: str) -> list[MikanItem]:
-        # Use defusedxml-style safety: disable external entity resolution.
-        import io
-
-        it = parse(io.StringIO(content))
-        root = it.getroot()
+        root = fromstring(content)
         channel = root.find("channel")
         if channel is None:
             return []
@@ -113,4 +143,23 @@ def _parse_rfc2822(text: str) -> datetime:
     return tt
 
 
-__all__ = ["MikanClient", "MikanItem"]
+def _validate_public_anime_feed(rss_url: str) -> None:
+    parsed = urlsplit(rss_url)
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    bangumi_ids = query.get("bangumiId", [])
+    valid = (
+        parsed.scheme == "https"
+        and parsed.hostname in {"mikanani.me", "www.mikanani.me"}
+        and parsed.path == "/RSS/Bangumi"
+        and set(query) == {"bangumiId"}
+        and len(bangumi_ids) == 1
+        and bangumi_ids[0].isdigit()
+    )
+    if not valid:
+        raise ProviderError(
+            ProviderErrorKind.PERMANENT,
+            "only public per-anime Mikan RSS feeds are allowed",
+        )
+
+
+__all__ = ["MikanClient", "MikanFeedResult", "MikanItem"]

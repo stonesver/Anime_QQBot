@@ -193,7 +193,7 @@ class AniListClient:
         return """
         query Schedule($mediaId: Int!) {
           Page(perPage: 50) {
-            airingSchedules(mediaId: $mediaId, notYetAired: false) {
+            airingSchedules(mediaId: $mediaId, notYetAired: true) {
               id
               episode
               airingAt

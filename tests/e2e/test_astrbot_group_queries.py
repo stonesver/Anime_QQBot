@@ -1,18 +1,42 @@
-"""E2E tests for group queries through the AstrBot adapter (Task 9).
+"""E2E tests for group queries through the AstrBot adapter (Task 9 + P0.4).
 
-Uses the EventAdapter with stub handlers to validate the full chain:
-message -> parse -> ChatContext -> handler -> Reply -> render.
+These tests cover two layers:
+
+* The parsing / dispatch contract: ``message -> Intent -> Reply``.
+  This is exercised with stub handlers because it does not need
+  a database.
+* The real use case contract: the adapter dispatches the parsed
+  Intent to ``anime_qqbot.application.use_cases``. These tests
+  run against a real PostgreSQL via the ``async_engine`` fixture
+  and assert the resulting Reply carries the actual anime row.
 """
 
 from __future__ import annotations
 
+import os
+import sys
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from uuid import UUID, uuid4
+
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import (
     EventAdapter,
     Reply,
     ReplyBlock,
 )
+
+SAMPLE_ANIME_ID = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1")
+SECOND_ANIME_ID = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee2")
+
+
+# ---------------------------------------------------------------------------
+# Stub-handler tests (no DB)
+# ---------------------------------------------------------------------------
 
 
 async def _today_handler(ctx, intent) -> Reply:
@@ -57,7 +81,7 @@ HANDLERS = {
 
 @pytest.fixture
 def adapter() -> EventAdapter:
-    return EventAdapter(handlers=HANDLERS)
+    return EventAdapter(sessions=None, handlers=HANDLERS)
 
 
 @pytest.mark.asyncio
@@ -120,7 +144,7 @@ async def test_detail_with_internal_id(adapter: EventAdapter) -> None:
         user_id="1",
         display_name="u",
         unified_msg_origin=None,
-        content="/番剧 详情 aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+        content=f"/番剧 详情 {SAMPLE_ANIME_ID}",
     )
     assert "anime_id=" in reply.blocks[0].text
 
@@ -149,7 +173,6 @@ async def test_multi_candidate_returns_candidates_list(adapter: EventAdapter) ->
         content="/番剧 搜索 Ambiguous",
     )
     assert reply.candidates
-    # internal id in candidate text
     assert "aaaaaaaa" in reply.candidates[0]
 
 
@@ -161,7 +184,7 @@ async def test_next_airing_query(adapter: EventAdapter) -> None:
         user_id="1",
         display_name="u",
         unified_msg_origin=None,
-        content="/番剧 下次 aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+        content=f"/番剧 下次 {SAMPLE_ANIME_ID}",
     )
     assert "next:" in reply.blocks[0].text
 
@@ -177,3 +200,471 @@ async def test_status_query(adapter: EventAdapter) -> None:
         content="/番剧 状态",
     )
     assert reply is not None
+
+
+# ---------------------------------------------------------------------------
+# Real use-case tests (require PostgreSQL)
+# ---------------------------------------------------------------------------
+
+
+def _engine() -> AsyncEngine:
+    return create_async_engine(os.environ["TEST_DATABASE_URL"])
+
+
+@pytest.fixture
+async def async_engine() -> AsyncEngine:
+    engine = _engine()
+    async with engine.begin() as conn:
+        await conn.exec_driver_sql(
+            "TRUNCATE TABLE delivery_attempts, notification_jobs, "
+            "subscription_resource_filters, follow_subscriptions, "
+            "source_snapshots, anime_source_links, anime_titles, "
+            "airing_occurrences, external_entries, animes, "
+            "source_sync_states, chat_groups, group_memberships "
+            "RESTART IDENTITY CASCADE"
+        )
+    yield engine
+    await engine.dispose()
+
+
+def _sessions_for(engine: AsyncEngine):
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def _insert_anime(engine: AsyncEngine, *, anime_id: UUID, title: str, nsfw: str) -> None:
+    from anime_qqbot.persistence.models.catalog import Anime
+
+    factory = _sessions_for(engine)
+    async with factory() as session, session.begin():
+        session.add(
+            Anime(
+                id=anime_id,
+                display_title=title,
+                nsfw_flag=nsfw,
+                disabled=False,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_real_search_finds_anime(async_engine: AsyncEngine) -> None:
+    await _insert_anime(async_engine, anime_id=SAMPLE_ANIME_ID, title="夏日物语", nsfw="false")
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="1",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content="/番剧 搜索 夏日物语",
+    )
+    assert reply.kind == "text"
+    assert "夏日物语" in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_real_season_only_lists_occurrences_in_requested_quarter(
+    async_engine: AsyncEngine,
+) -> None:
+    from anime_qqbot.persistence.models.catalog import AiringOccurrenceRow, ExternalEntry
+
+    await _insert_anime(async_engine, anime_id=SAMPLE_ANIME_ID, title="夏季番", nsfw="false")
+    await _insert_anime(async_engine, anime_id=SECOND_ANIME_ID, title="春季番", nsfw="false")
+    factory = _sessions_for(async_engine)
+    async with factory() as session, session.begin():
+        summer_entry = uuid4()
+        spring_entry = uuid4()
+        for entry_id, external_id in (
+            (summer_entry, "summer"),
+            (spring_entry, "spring"),
+        ):
+            session.add(
+                ExternalEntry(
+                    id=entry_id,
+                    provider="fixture",
+                    external_id=external_id,
+                    disabled=False,
+                    created_at=datetime.now(UTC),
+                    updated_at=datetime.now(UTC),
+                )
+            )
+        await session.flush()
+        session.add_all(
+            [
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SAMPLE_ANIME_ID,
+                    source_entry_id=summer_entry,
+                    episode_label="01",
+                    air_date=datetime(2026, 7, 5, tzinfo=UTC).date(),
+                    air_at=datetime(2026, 7, 5, 12, 0, tzinfo=UTC),
+                    precision="exact",
+                    source_event_key="summer-01",
+                    updated_at=datetime.now(UTC),
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SECOND_ANIME_ID,
+                    source_entry_id=spring_entry,
+                    episode_label="01",
+                    air_date=datetime(2026, 4, 5, tzinfo=UTC).date(),
+                    air_at=datetime(2026, 4, 5, 12, 0, tzinfo=UTC),
+                    precision="exact",
+                    source_event_key="spring-01",
+                    updated_at=datetime.now(UTC),
+                ),
+            ]
+        )
+
+    adapter = EventAdapter(sessions=factory)
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="1",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin="umo",
+        content="/番剧 季度 2026 夏",
+    )
+
+    assert "夏季番" in reply.blocks[0].text
+    assert "春季番" not in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_real_subscribe_is_idempotent(async_engine: AsyncEngine) -> None:
+    await _insert_anime(async_engine, anime_id=SAMPLE_ANIME_ID, title="夏日物语", nsfw="false")
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    for _ in range(3):
+        reply = await adapter.handle_message(
+            platform="qq",
+            group_id="100",
+            user_id="u1",
+            display_name="User",
+            unified_msg_origin=None,
+            content=f"/番剧 订阅 {SAMPLE_ANIME_ID}",
+        )
+        assert reply.kind == "text"
+        assert "已订阅" in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_real_subscription_settings_persist_all_filters(
+    async_engine: AsyncEngine,
+) -> None:
+    from sqlalchemy import select
+
+    from anime_qqbot.persistence.models.subscriptions_v2 import (
+        SubscriptionResourceFilter,
+    )
+
+    await _insert_anime(async_engine, anime_id=SAMPLE_ANIME_ID, title="夏日物语", nsfw="false")
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    common = {
+        "platform": "qq",
+        "group_id": "100",
+        "user_id": "u1",
+        "display_name": "User",
+        "unified_msg_origin": "umo:100",
+    }
+    await adapter.handle_message(
+        **common,
+        content=f"/番剧 订阅 {SAMPLE_ANIME_ID}",
+    )
+    reply = await adapter.handle_message(
+        **common,
+        content=(
+            f"/番剧 订阅设置 {SAMPLE_ANIME_ID} 语言=简体 字幕组=GroupA,GroupB 分辨率=1080P,720p"
+        ),
+    )
+
+    assert reply.kind == "text"
+    async with factory() as session:
+        resource_filter = (await session.execute(select(SubscriptionResourceFilter))).scalar_one()
+    assert resource_filter.language == "chs"
+    assert resource_filter.subtitle_groups == ["GroupA", "GroupB"]
+    assert resource_filter.resolutions == ["1080p", "720p"]
+
+
+@pytest.mark.asyncio
+async def test_real_blocked_anime_rejected(async_engine: AsyncEngine) -> None:
+    await _insert_anime(async_engine, anime_id=SAMPLE_ANIME_ID, title="成人内容", nsfw="true")
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content=f"/番剧 订阅 {SAMPLE_ANIME_ID}",
+    )
+    assert reply.kind == "error"
+    assert "屏蔽" in reply.error
+
+
+@pytest.mark.asyncio
+async def test_real_multi_candidate_returns_two_rows(async_engine: AsyncEngine) -> None:
+    await _insert_anime(async_engine, anime_id=SAMPLE_ANIME_ID, title="夏日物语", nsfw="false")
+    await _insert_anime(
+        async_engine, anime_id=SECOND_ANIME_ID, title="夏日物语 第二季", nsfw="false"
+    )
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content="/番剧 搜索 夏日",
+    )
+    assert reply.kind == "candidates"
+    assert len(reply.candidates) == 2
+
+
+@pytest.mark.asyncio
+async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> None:
+    from anime_qqbot.persistence.models.catalog import (
+        AiringOccurrenceRow,
+        Anime,
+        ExternalEntry,
+    )
+
+    factory = _sessions_for(async_engine)
+    now = datetime.now(UTC)
+    safe_id = SAMPLE_ANIME_ID
+    blocked_id = SECOND_ANIME_ID
+    safe_source_id = uuid4()
+    blocked_source_id = uuid4()
+    async with factory() as session, session.begin():
+        session.add_all(
+            [
+                Anime(
+                    id=safe_id,
+                    display_title="安全番剧",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Anime(
+                    id=blocked_id,
+                    display_title="成人番剧",
+                    nsfw_flag="true",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=safe_source_id,
+                    provider="bangumi",
+                    external_id="123",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=blocked_source_id,
+                    provider="bangumi",
+                    external_id="456",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=safe_id,
+                    source_entry_id=safe_source_id,
+                    episode_label="01",
+                    air_date=now.date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="safe-evt-1",
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=blocked_id,
+                    source_entry_id=blocked_source_id,
+                    episode_label="01",
+                    air_date=now.date(),
+                    air_at=now,
+                    precision="exact",
+                    source_event_key="blocked-evt-1",
+                    updated_at=now,
+                ),
+            ]
+        )
+    adapter = EventAdapter(sessions=factory)
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content="/番剧 今天",
+    )
+    assert reply.kind == "text"
+    assert "安全番剧" in reply.blocks[0].text
+    assert "成人番剧" not in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_real_umo_does_not_get_overwritten_by_stale_event(
+    async_engine: AsyncEngine,
+) -> None:
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    new_umo = "fresh-umo-token-001"
+    await adapter.handle_message(
+        platform="qq",
+        group_id="500",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=new_umo,
+        content="/番剧 今天",
+    )
+    stale_umo = "stale-umo-token-999"
+    await adapter.handle_message(
+        platform="qq",
+        group_id="500",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=stale_umo,
+        content="/番剧 本周",
+    )
+    async with factory() as session:
+        from sqlalchemy import select
+
+        from anime_qqbot.persistence.models.identity import ChatGroup
+
+        stmt = select(ChatGroup).where(ChatGroup.platform == "qq")
+        rows = (await session.execute(stmt)).scalars().all()
+    assert len(rows) == 1
+    # The most recent event timestamp wins; this verifies UMO
+    # follows the same freshness contract.
+    assert rows[0].unified_msg_origin == stale_umo
+
+
+@pytest.mark.asyncio
+async def test_real_chat_group_event_upserts(async_engine: AsyncEngine) -> None:
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+    await adapter.handle_message(
+        platform="qq",
+        group_id="600",
+        user_id="u1",
+        display_name="First",
+        unified_msg_origin="umo-1",
+        content="/番剧 今天",
+    )
+    await adapter.handle_message(
+        platform="qq",
+        group_id="600",
+        user_id="u1",
+        display_name="Renamed",
+        unified_msg_origin="umo-2",
+        content="/番剧 今天",
+    )
+    async with factory() as session:
+        from sqlalchemy import select
+
+        from anime_qqbot.persistence.models.identity import (
+            ChatGroup,
+            GroupMembership,
+        )
+
+        groups = (await session.execute(select(ChatGroup))).scalars().all()
+        members = (await session.execute(select(GroupMembership))).scalars().all()
+    assert len(groups) == 1
+    assert len(members) == 1
+    assert members[0].display_name == "Renamed"
+
+
+# ---------------------------------------------------------------------------
+# Outbox dispatch tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_outbox_claim_skips_locked(async_engine: AsyncEngine) -> None:
+    """Two concurrent claimers must never see the same job."""
+    import asyncio
+
+    from anime_qqbot.application import (
+        claim_pending_jobs,
+        complete_job,
+    )
+    from anime_qqbot.persistence.models.identity import ChatGroup
+    from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
+
+    factory = _sessions_for(async_engine)
+    chat_group_id = uuid4()
+    job_id = uuid4()
+    async with factory() as session, session.begin():
+        session.add(
+            ChatGroup(
+                id=chat_group_id,
+                platform="qq",
+                external_group_id="1000",
+                unified_msg_origin="umo",
+                timezone="Asia/Shanghai",
+                enabled=True,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        session.add(
+            NotificationJob(
+                id=job_id,
+                chat_group_id=chat_group_id,
+                job_type="airing",
+                business_key="airing-test-1",
+                payload={"x": 1},
+                status="pending",
+                available_at=datetime.now(UTC) - timedelta(minutes=1),
+                expires_at=datetime.now(UTC) + timedelta(hours=1),
+                attempt_count=0,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+    claimed_a, claimed_b = await asyncio.gather(
+        claim_pending_jobs(factory, consumer="consumer-a", limit=10),
+        claim_pending_jobs(factory, consumer="consumer-b", limit=10),
+    )
+    assert len(claimed_a) + len(claimed_b) == 1
+    claimed_id = (claimed_a + claimed_b)[0]
+    assert claimed_id == job_id
+
+    # Subsequent calls find nothing because the job is leased.
+    again = await claim_pending_jobs(factory, consumer="consumer-c", limit=10)
+    assert again == []
+
+    await complete_job(factory, job_id=claimed_id, result="sent")
+    async with factory() as session:
+        from sqlalchemy import select
+
+        from anime_qqbot.persistence.models.notifications_v2 import DeliveryAttempt
+
+        job = await session.get(NotificationJob, job_id)
+        attempt = (
+            await session.execute(select(DeliveryAttempt).where(DeliveryAttempt.job_id == job_id))
+        ).scalar_one_or_none()
+    assert job is not None
+    assert job.status == "sent"
+    assert attempt is not None
+    assert attempt.attempt_no == 1

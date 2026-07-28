@@ -4,25 +4,36 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, date, datetime
+from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
-from anime_qqbot.catalog.models import AnimeDetail
+from anime_qqbot.catalog.models import AiringOccurrence, AnimeDetail
 from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
 from anime_qqbot.catalog.sync_anilist import AniListSyncService
 from anime_qqbot.clock import FrozenClock
+from anime_qqbot.persistence.models.catalog import AiringOccurrenceRow
 
 
 class _StubAniList:
-    def __init__(self, results: dict[int, AnimeDetail | None]) -> None:
+    def __init__(
+        self,
+        results: dict[int, AnimeDetail | None],
+        schedules: dict[int, list[AiringOccurrence]] | None = None,
+    ) -> None:
         self._results = results
+        self._schedules = schedules or {}
         self.calls: list[int] = []
 
     async def fetch_media(self, anilist_id: int) -> AnimeDetail | None:
         self.calls.append(anilist_id)
         return self._results.get(anilist_id)
+
+    async def airing_schedule(self, anilist_id: int) -> list[AiringOccurrence]:
+        return self._schedules.get(anilist_id, [])
 
 
 def _engine():
@@ -142,3 +153,37 @@ async def test_health_returns_healthy(session_factory) -> None:
     from anime_qqbot.catalog.ports import SourceHealthStatus
 
     assert health.status is SourceHealthStatus.HEALTHY
+
+
+@pytest.mark.asyncio
+async def test_confirmed_link_persists_exact_airing_schedule(session_factory) -> None:
+    now = datetime(2026, 7, 27, tzinfo=UTC)
+    occurrence = AiringOccurrence(
+        subject_id=21,
+        air_date=date(2026, 8, 1),
+        air_at=datetime(2026, 8, 1, 12, 30, tzinfo=UTC),
+        episode=4,
+        source="anilist",
+        updated_at=now,
+    )
+    stub = _StubAniList({21: _detail(21)}, {21: [occurrence]})
+    write = CatalogWriteRepository(session_factory)
+    sync = AniListSyncService(stub, write, FrozenClock(now))
+    delta = await sync.sync_subject(21)
+    anime = await write.create_anime(display_title="Mapped")
+    await write.add_source_link(
+        anime_id=anime.id,
+        external_entry_id=UUID(str(delta.added[0].id)),
+        status="confirmed",
+        evidence_type="manual",
+        confidence=1.0,
+        method="test",
+    )
+
+    await sync.sync_subject(21)
+
+    async with session_factory() as session:
+        row = (await session.execute(select(AiringOccurrenceRow))).scalar_one()
+    assert row.anime_id == anime.id
+    assert row.air_at == occurrence.air_at
+    assert row.precision == "exact"

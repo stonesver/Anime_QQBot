@@ -9,10 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import EventAdapter
-from astrbot_plugin_anime_tracking.anime_tracking_plugin.lifecycle import (
-    PluginLifecycle,
-)
+from .adapter import EventAdapter
+from .lifecycle import PluginLifecycle
 
 
 class CommandHandlers:
@@ -25,7 +23,7 @@ class CommandHandlers:
 
     def __init__(self, lifecycle: PluginLifecycle) -> None:
         self._lifecycle = lifecycle
-        self._adapter = EventAdapter()
+        self._adapter = EventAdapter(sessions=getattr(lifecycle, "sessions", None))
 
     # In production, AstrBot's decorator maps group-level commands to these
     # methods. Tests call them directly with fake events.
@@ -51,9 +49,7 @@ class CommandHandlers:
         )
 
         # Rendering to AstrBot chain happens in rendering.py.
-        from astrbot_plugin_anime_tracking.anime_tracking_plugin.rendering import (
-            render_reply,
-        )
+        from .rendering import render_reply
 
         return await render_reply(reply, event)
 

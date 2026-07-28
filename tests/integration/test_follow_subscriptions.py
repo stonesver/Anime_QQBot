@@ -189,4 +189,4 @@ async def test_airing_planner_creates_jobs(session_factory) -> None:
     claimed = await outbox.claim("worker-1", limit=5)
     assert len(claimed) == 1
     assert claimed[0].payload["episode_label"] == "7"
-    assert "u1" in claimed[0].payload["user_ids"]
+    assert "u1" in claimed[0].payload["at_user_ids"]

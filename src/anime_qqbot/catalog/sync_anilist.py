@@ -72,6 +72,17 @@ class AniListSyncService:
             source_time=self._clock.now(),
             fetched_at=self._clock.now(),
         )
+        link = await self._write_repo.find_source_link(
+            anime_id=None,
+            external_entry_id=entry.id,
+        )
+        if link is not None and link.status == "confirmed":
+            occurrences = await self._anilist.airing_schedule(anilist_id)
+            await self._write_repo.upsert_airing_occurrences(
+                anime_id=link.anime_id,
+                source_entry_id=entry.id,
+                occurrences=occurrences,
+            )
         return SourceSyncDelta(
             added=(
                 ExternalEntry(

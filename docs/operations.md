@@ -1,84 +1,130 @@
-# 运维手册
+# v0.2.0 运维手册
 
 ## 日常检查
 
 ```bash
 docker compose ps
-docker compose logs --since=30m bot worker
+docker compose logs --since=30m worker astrbot napcat
 docker compose exec -T postgres pg_isready -U anime -d anime
 ```
 
-预期状态：postgres、bot、worker 为 `healthy`，migrate 为退出码 0。日志由 Docker 按单文件 10 MB、最多 3 个文件轮转。
+预期 `postgres`、`worker`、`astrbot`、`napcat` 为 healthy，`migrate` 正常退出。
+AstrBot 的就绪检查还会验证插件消费者心跳；NapCat 的容器健康不等于 QQ 已登录。
+
+## 常见故障
+
+### 迁移失败
+
+```bash
+docker compose logs migrate
+docker compose run --rm --no-deps migrate
+```
+
+先修复数据库连接或迁移错误。Worker 和 AstrBot 不应越过失败的迁移继续启动。
+
+### 群命令没有响应
+
+```bash
+docker compose logs --tail=200 napcat astrbot
+docker compose exec astrbot python -m anime_qqbot.entrypoints.healthcheck astrbot
+```
+
+依次确认：
+
+1. QQ 小号在 NapCat WebUI 中为已登录状态；
+2. NapCat 已连接 `ws://astrbot:6199/ws`；
+3. AstrBot `aiocqhttp` 适配器的端口为 6199；
+4. 两端 Access Token 与 `.env` 的 `ONEBOT_TOKEN` 完全相同；
+5. `astrbot-plugin-anime-tracking` 已加载且消费者心跳正常。
+
+修改 Token 后要同时更新 `.env` 和 AstrBot WebUI 中的适配器 Token，再重建两个容器：
+
+```bash
+docker compose up -d --force-recreate astrbot napcat
+```
+
+### Worker 不健康或没有提醒
+
+```bash
+docker compose logs --tail=300 worker
+docker compose exec worker python -m anime_qqbot.entrypoints.healthcheck worker
+```
+
+检查上游请求、数据库连接和 Worker 心跳。开播提醒只对有精确时间的场次建立任务；
+Mikan 只处理已确认的番剧映射，未知集数会保存但不会通知。字幕组、语言、分辨率过滤
+按维度取交集；某维度没有识别结果时，只会通知未限制该维度的订阅。
+
+通知使用持久化 Outbox、租约和业务键去重。失败任务会按策略重试，超过 24 小时的
+Mikan 更新不会再投递，以免服务恢复后刷屏。
+
+### 为番剧确认 Mikan 映射
+
+Mikan 资源轮询只接受人工确认的公开番剧映射。先在群内通过查询取得内部 Anime ID，
+再从 Mikan 番剧页 URL 取得数字 ID，然后在服务器执行：
+
+```bash
+docker compose run --rm --no-deps worker map-mikan \
+  --anime-id <内部-Anime-UUID> \
+  --mikan-id <Mikan-数字-ID>
+```
+
+命令幂等；若同一 Mikan ID 已指向另一部番剧会拒绝覆盖。映射建立后，只要已有用户
+开启资源提醒，Worker 下一轮就会开始轮询公开 RSS。
+
+### 为番剧确认 AniList 映射
+
+从 AniList 条目 URL 取得数字 ID 后执行：
+
+```bash
+docker compose run --rm --no-deps worker map-anilist \
+  --anime-id <内部-Anime-UUID> \
+  --anilist-id <AniList-数字-ID>
+```
+
+该命令会先校验 AniList 条目，再建立 confirmed 映射并同步精确放送时刻。只有
+confirmed 映射的精确时刻会产生开播提醒。
+
+### Bangumi、AniList 或 Mikan 不可用
+
+查询优先使用数据库中最近一次成功快照。检查：
+
+```bash
+docker compose logs worker | grep -E 'Bangumi|AniList|Mikan|sync|poll'
+```
+
+不要通过大幅提高轮询频率绕过上游限制。Bangumi 必须使用可联系到维护者的
+`BANGUMI_USER_AGENT`；Mikan Feed 只接受公开的
+`https://mikanani.me/RSS/Bangumi?bangumiId=<数字>`。
 
 ## 备份与恢复
 
-创建权限为仅当前用户可读的 gzip SQL 备份：
+创建仅当前用户可读的 gzip SQL 备份：
 
 ```bash
 ./scripts/backup-postgres.sh
 BACKUP_DIR=/srv/anime-backups ./scripts/backup-postgres.sh
 ```
 
-定期把备份复制到另一台机器或对象存储，并至少做一次恢复演练。恢复会停止 bot/worker、替换整个 `public` schema、重跑迁移，再恢复服务：
+把备份复制到另一台机器或对象存储，并定期做恢复演练。恢复会停止 Worker、AstrBot、
+NapCat，替换整个 `public` schema，重跑迁移，再恢复服务：
 
 ```bash
 ./scripts/restore-postgres.sh backups/anime-YYYYMMDDTHHMMSSZ.sql.gz
 ```
 
-无人值守验收可在明确选择备份文件后使用 `--yes`；生产人工恢复建议保留交互确认。
-如需在维护窗口中保持应用停止，可设置 `RESTORE_SKIP_APP_START=1`，确认数据后再手工执行 `docker compose up -d bot worker`。
-
-## 常见故障
-
-### migrate 失败
+无人值守环境只有在备份文件已经明确选择后才使用 `--yes`。若要在维护窗口保持应用
+停止，设置 `RESTORE_SKIP_APP_START=1`，确认数据后再执行：
 
 ```bash
-docker compose logs migrate
-docker compose run --rm migrate
+docker compose up -d worker astrbot napcat
 ```
 
-先解决数据库连接或迁移错误。bot/worker 在 migrate 成功前不会启动。
+## 安全边界
 
-### bot 不健康
-
-```bash
-docker compose logs --tail=200 bot
-docker compose exec bot python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8080/health/live').read())"
-```
-
-重点检查 QQ 凭据、服务器出口网络、开放平台 IP 白名单、HTTPS 证书和 `/qqbot` 回调配置。回调签名错误会返回 401。修改 `.env` 后执行 `docker compose up -d --force-recreate bot`。
-
-### worker 不健康或没有推送
-
-```bash
-docker compose logs --tail=200 worker
-docker compose exec worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8081/health/ready').read())"
-```
-
-依次确认：群已允许主动消息、计划处于开启状态、订阅成员仍在群内、番剧数据已同步。发送 `推送状态` 查看群配置。发送失败分为可重试、永久失败和 `unknown`；`unknown` 不会自动重发，管理员确认未送达后才能执行 `补发 <任务ID>`，避免重复骚扰。
-
-### Bangumi 数据不可用
-
-查询会继续使用数据库中的最近一次成功快照，并在数据陈旧时提示。检查 worker 日志和 `BANGUMI_USER_AGENT`；不要通过提高扫描频率绕过上游限制。
-
-### 封面无法加载
-
-确认 `.env` 中 `QQ_IMAGE_PROXY_BASE_URL` 使用自有 HTTPS 域名，并且反向代理已将 `/qqbot/media/` 转发到 bot。选择一个数据库中存在的条目验证：
-
-```bash
-curl -fsS -o /dev/null -D - https://你的域名/qqbot/media/covers/<Bangumi-ID>
-```
-
-预期返回 `200`、`Content-Type: image/jpeg` 或 `image/png`，以及一天的公共缓存响应头。同时确认 QQ 开放平台“消息 URL 配置”中已配置并验证 `你的域名/qqbot/media`。日志事件 `qq_cover_proxy_rejected` 会给出上游状态、类型、大小或来源拒绝原因，但不会记录图片原始 URL。
-
-### 按钮显示成功但没有新消息
-
-检查按钮后的群消息请求。日志事件 `qq_api_request_failed` 会安全记录 HTTP 状态、QQ 错误码和错误说明；`qq_delivery_failed` 记录最终投递结果。按钮回复应使用 `event_id`，不应把 `INTERACTION_CREATE:...` 作为 `msg_id` 发送。
-
-## 安全
-
-- `.env` 权限保持 `0600`，不得提交到 Git；
-- 定期轮换 QQ `AppSecret` 和数据库密码；
-- 不对公网直接发布 PostgreSQL、8080、8081 端口；只通过 HTTPS 反向代理开放 `/qqbot`；
-- 日志中不得出现令牌、密钥和完整用户消息；
-- 恢复、删除卷、手动补发都按高风险操作处理并留存操作者记录。
+- `.env` 保持 `0600`，不得提交 Token、数据库密码或 QQ 登录材料；
+- 6185、6099 默认仅绑定本机，PostgreSQL、8081、6199 不发布到公网；
+- 远程管理使用 SSH 隧道或受控内网；
+- 专用 QQ 小号启用异常登录告警；是否关闭设备验证取决于 NapCat 实际登录结果，
+  不要为省事长期降低账号安全；
+- 日志不得记录 Access Token、密码和完整用户消息；
+- 数据库恢复、删除卷、人工补发都按高风险操作处理。

@@ -3,7 +3,8 @@
 AstrBot 多源群聊追番服务：通过 NapCat (OneBot 11) + AstrBot 接入普通 QQ 小号，
 提供群内固定命令查询、订阅追番、预计放送提醒和 Mikan 资源更新通知。
 
-当前状态：v0.2.0 自动验收通过，待真实测试群 canary。
+当前状态：v0.2.0 代码、264 项测试与隔离五单元启动验收完成，首次部署仍需在 AstrBot WebUI
+完成一次 OneBot 适配器配置，并在真实测试群执行 canary。
 
 ## 核心功能
 
@@ -40,7 +41,7 @@ QQ小号 → NapCat/OneBot 11 → AstrBot → Anime Plugin → Anime Core → Po
 ```bash
 # Python 3.12 + Docker
 uv sync --frozen
-.venv/bin/pytest tests/unit
+.venv/bin/pytest
 .venv/bin/ruff check .
 .venv/bin/mypy src
 ```
@@ -49,9 +50,14 @@ uv sync --frozen
 
 ```bash
 cp .env.example .env
-# 填写 POSTGRES_PASSWORD 和 ONEBOT_TOKEN
-docker compose up -d --build
+# 填写 POSTGRES_PASSWORD、ONEBOT_TOKEN 和 BANGUMI_USER_AGENT
+chmod 600 .env
+./scripts/deploy-multisource.sh --no-backup
 docker compose ps
-# QQ 登录: http://127.0.0.1:8082 (NapCat)
-# AstrBot: http://127.0.0.1:6180
 ```
+
+- AstrBot WebUI：`http://127.0.0.1:6185`
+- NapCat WebUI：`http://127.0.0.1:6099`
+
+两个管理界面默认只绑定本机。远程服务器请用 SSH 端口转发访问，不要直接暴露到公网。
+首次连接的逐步配置见[部署指南](docs/deployment.md)。

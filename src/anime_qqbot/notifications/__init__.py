@@ -1,3 +1,9 @@
-from anime_qqbot.notifications.module import NotificationAudience, merge_audiences
+"""Notification outbox + planner (v0.2.0)."""
 
-__all__ = ["NotificationAudience", "merge_audiences"]
+from anime_qqbot.notifications.outbox import OutboxJob, OutboxRepository
+from anime_qqbot.notifications.planner_v2 import (
+    AiringEvent,
+    AiringPlanner,
+)
+
+__all__ = ["AiringEvent", "AiringPlanner", "OutboxJob", "OutboxRepository"]

@@ -1,27 +1,12 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Anime Tracking configuration",
-  "type": "object",
-  "properties": {
-    "database_url": {
-      "type": "string",
-      "description": "Async database connection URL; read from DATABASE_URL env when absent."
-    },
-    "bangumi_user_agent": {
-      "type": "string",
-      "default": "anime-qqbot/0.2",
-      "description": "User-Agent sent to Bangumi API."
-    },
-    "default_timezone": {
-      "type": "string",
-      "default": "Asia/Shanghai",
-      "description": "Group timezone when none is configured."
-    },
-    "outbox_poll_seconds": {
-      "type": "number",
-      "default": 3.0,
-      "description": "Interval in seconds between notification outbox polls."
-    }
+  "default_timezone": {
+    "type": "string",
+    "default": "Asia/Shanghai",
+    "description": "未设置群时区时使用的 IANA 时区。"
   },
-  "additionalProperties": false
+  "outbox_poll_seconds": {
+    "type": "float",
+    "default": 3.0,
+    "description": "通知 Outbox 的轮询间隔（秒）。"
+  }
 }

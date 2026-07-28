@@ -137,8 +137,18 @@ def test_subscription_settings_parses_filters() -> None:
 
     assert isinstance(intent, Intent)
     assert intent.kind == IntentKind.SUBSCRIPTION_SETTINGS
-    assert intent.language == "简体"
+    assert intent.language == "chs"
     assert intent.subtitle_groups == ("A", "B")
+    assert intent.resolutions == ("1080p",)
+
+
+def test_subscription_settings_normalizes_unrestricted_filters() -> None:
+    intent = parse_fixed_command(f"/番剧 订阅设置 {_INTERNAL_ID} 语言=不限 字幕组=不限 分辨率=不限")
+
+    assert isinstance(intent, Intent)
+    assert intent.language is None
+    assert intent.subtitle_groups == ()
+    assert intent.resolutions == ()
 
 
 def test_subscription_settings_requires_internal_id() -> None:

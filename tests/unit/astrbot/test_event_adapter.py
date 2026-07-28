@@ -22,7 +22,7 @@ async def _noop(ctx, intent):
 
 
 async def test_help_command_returns_full_help() -> None:
-    adapter = EventAdapter()
+    adapter = EventAdapter(sessions=None)
 
     reply = await adapter.handle_message(
         platform="qq",
@@ -52,7 +52,7 @@ async def test_help_command_returns_full_help() -> None:
     ],
 )
 async def test_all_fixed_commands_parse_and_dispatch(content: str) -> None:
-    adapter = EventAdapter()
+    adapter = EventAdapter(sessions=None)
 
     reply = await adapter.handle_message(
         platform="qq",
@@ -69,7 +69,7 @@ async def test_all_fixed_commands_parse_and_dispatch(content: str) -> None:
 
 
 async def test_unknown_subcommand_returns_error() -> None:
-    adapter = EventAdapter()
+    adapter = EventAdapter(sessions=None)
 
     reply = await adapter.handle_message(
         platform="qq",
@@ -84,7 +84,7 @@ async def test_unknown_subcommand_returns_error() -> None:
 
 
 async def test_non_fixed_command_returns_error() -> None:
-    adapter = EventAdapter()
+    adapter = EventAdapter(sessions=None)
 
     reply = await adapter.handle_message(
         platform="qq",
@@ -106,7 +106,7 @@ async def test_context_is_built_with_timezone() -> None:
         captured["group_id"] = ctx.group_id
         return Reply(kind="text", blocks=[])
 
-    adapter = EventAdapter(handlers={"today": _capture})
+    adapter = EventAdapter(sessions=None, handlers={"today": _capture})
 
     await adapter.handle_message(
         platform="qq",
@@ -123,7 +123,7 @@ async def test_context_is_built_with_timezone() -> None:
 
 
 async def test_unified_msg_origin_passed_through() -> None:
-    adapter = EventAdapter()
+    adapter = EventAdapter(sessions=None)
 
     reply = await adapter.handle_message(
         platform="qq",

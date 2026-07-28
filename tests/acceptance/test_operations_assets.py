@@ -25,6 +25,17 @@ def test_multisource_deploy_script_exists() -> None:
     text = deploy.read_text()
     assert "docker compose" in text
     assert "astrbot" in text
+    assert "ONEBOT_TOKEN" in text
+    assert "docker compose run --rm --no-deps migrate" in text
+    assert "deploy-acr" not in text
+
+
+def test_restore_targets_only_v02_runtime_services() -> None:
+    text = Path("scripts/restore-postgres.sh").read_text()
+
+    assert "stop worker astrbot napcat" in text
+    assert "0011_complete_mikan_pipeline (head)" in text
+    assert " bot " not in text
 
 
 def test_documented_links_and_secret_files() -> None:

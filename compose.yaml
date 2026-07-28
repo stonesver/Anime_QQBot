@@ -1,7 +1,7 @@
 name: anime-qqbot
 
 x-app: &app
-  image: anime-qqbot:${IMAGE_TAG:-latest}
+  image: anime-qqbot:${IMAGE_TAG:-0.2.0}
   build:
     context: .
   env_file:
@@ -10,6 +10,16 @@ x-app: &app
   environment:
     APP_ENV: production
     DATABASE_URL: postgresql+asyncpg://anime:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/anime
+    BANGUMI_USER_AGENT: ${BANGUMI_USER_AGENT:?BANGUMI_USER_AGENT must be set}
+    BANGUMI_ACCESS_TOKEN: ${BANGUMI_ACCESS_TOKEN:-}
+    BANGUMI_API_BASE_URL: ${BANGUMI_API_BASE_URL:-https://api.bgm.tv}
+    BANGUMI_API_FALLBACK_URLS: ${BANGUMI_API_FALLBACK_URLS:-}
+    DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Shanghai}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    BANGUMI_DATA_SYNC_SECONDS: ${BANGUMI_DATA_SYNC_SECONDS:-21600}
+    WORKER_SCAN_SECONDS: ${WORKER_SCAN_SECONDS:-30}
+    MIKAN_POLL_SECONDS: ${MIKAN_POLL_SECONDS:-300}
+    MIKAN_BATCH_SECONDS: ${MIKAN_BATCH_SECONDS:-600}
   init: true
   restart: unless-stopped
   stop_grace_period: 20s
@@ -55,46 +65,68 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health/ready', timeout=2)"]
+      test: ["CMD", "python", "-m", "anime_qqbot.entrypoints.healthcheck", "worker"]
       interval: 15s
-      timeout: 3s
-      retries: 5
-
-  napcat:
-    image: napcat/napcat:3.6.0
-    environment:
-      ASTRBOT_REVERSE_WS: ws://astrbot:6199/ws
-      ASTRBOT_REVERSE_TOKEN: ${ONEBOT_TOKEN:-change-me}
-    volumes:
-      - napcat-data:/app/data
-      - napcat-config:/app/config
-    ports:
-      - "127.0.0.1:8082:8080"
-    restart: unless-stopped
-    depends_on:
-      - astrbot
+      timeout: 5s
+      retries: 8
+      start_period: 20s
 
   astrbot:
+    image: anime-astrbot:${IMAGE_TAG:-0.2.0}
     build:
       context: .
       dockerfile: Dockerfile.astrbot
-    image: anime-astrbot:${IMAGE_TAG:-latest}
+    env_file:
+      - path: .env
+        required: false
     environment:
       DATABASE_URL: postgresql+asyncpg://anime:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/anime
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ONEBOT_TOKEN: ${ONEBOT_TOKEN:?ONEBOT_TOKEN must be set}
+      TZ: ${TZ:-Asia/Shanghai}
     volumes:
-      - astrbot-data:/app/data
-      - astrbot-plugins:/app/plugin
+      - astrbot-data:/AstrBot/data
+      - ./astrbot_plugin_anime_tracking:/AstrBot/data/plugins/astrbot_plugin_anime_tracking:ro
     ports:
-      - "127.0.0.1:6180:6180"
+      - "127.0.0.1:${ASTRBOT_WEBUI_PORT:-6185}:6185"
+    expose:
+      - "6199"
+    healthcheck:
+      test: ["CMD", "python", "-m", "anime_qqbot.entrypoints.healthcheck", "astrbot"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
     restart: unless-stopped
     depends_on:
       migrate:
         condition: service_completed_successfully
 
+  napcat:
+    image: mlikiowa/napcat-docker:v4.18.13
+    entrypoint: ["/bin/bash", "/usr/local/bin/anime-napcat-entrypoint"]
+    environment:
+      NAPCAT_UID: ${NAPCAT_UID:-1000}
+      NAPCAT_GID: ${NAPCAT_GID:-1000}
+      ONEBOT_TOKEN: ${ONEBOT_TOKEN:?ONEBOT_TOKEN must be set}
+    volumes:
+      - napcat-qq:/app/.config/QQ
+      - napcat-config:/app/napcat/config
+      - ./scripts/napcat-entrypoint.sh:/usr/local/bin/anime-napcat-entrypoint:ro
+    ports:
+      - "127.0.0.1:${NAPCAT_WEBUI_PORT:-6099}:6099"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6099'"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      astrbot:
+        condition: service_healthy
+
 volumes:
   postgres-data:
-  napcat-data:
-  napcat-config:
   astrbot-data:
-  astrbot-plugins:
+  napcat-qq:
+  napcat-config:

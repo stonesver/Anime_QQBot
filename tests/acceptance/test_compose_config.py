@@ -26,9 +26,15 @@ def test_five_services_present() -> None:
 
 def test_napcat_uses_reverse_ws_with_token() -> None:
     compose = Path("compose.yaml").read_text()
+    entrypoint = Path("scripts/napcat-entrypoint.sh").read_text()
 
-    assert "astrbot:6199/ws" in compose
+    assert "astrbot:6199/ws" in entrypoint
     assert "ONEBOT_TOKEN" in compose
+    assert "ONEBOT_TOKEN must be set" in compose
+    assert "BANGUMI_USER_AGENT must be set" in compose
+    assert '"token": "\'"${token}"\'"' in entrypoint
+    assert "> /app/templates/astrbot.json" in entrypoint
+    assert "export MODE=astrbot" in entrypoint
 
 
 def test_no_qq_official_services() -> None:
@@ -49,3 +55,18 @@ def test_runtime_image_excludes_secrets() -> None:
     assert "USER animebot" in dockerfile
     assert ".env" in dockerignore
     assert ".git" in dockerignore
+
+
+def test_runtime_images_and_paths_are_pinned_to_verified_layout() -> None:
+    compose = Path("compose.yaml").read_text()
+    astrbot_dockerfile = Path("Dockerfile.astrbot").read_text()
+
+    assert "soulter/astrbot:v4.26.7" in astrbot_dockerfile
+    assert "mlikiowa/napcat-docker:v4.18.13" in compose
+    assert ":latest" not in compose
+    assert ":latest" not in astrbot_dockerfile
+    assert "/AstrBot/data" in compose
+    assert "/app/.config/QQ" in compose
+    assert "/app/napcat/config" in compose
+    assert ":6185" in compose
+    assert ":6099" in compose

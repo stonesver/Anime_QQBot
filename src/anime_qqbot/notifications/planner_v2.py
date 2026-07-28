@@ -53,7 +53,7 @@ class AiringPlanner:
                     "display_title": event.display_title,
                     "episode_label": event.episode_label,
                     "air_at": event.air_at.isoformat(),
-                    "user_ids": user_ids,
+                    "at_user_ids": sorted(set(user_ids)),
                 },
                 available_at=event.air_at,
                 expires_at=event.air_at + timedelta(hours=2),

@@ -1,3 +1,2 @@
-# Runtime dependencies for the anime-tracking AstrBot plugin.
-# Pinned to the versions tested in the project lock file.
-astrbot>=3.6.0
+# Anime Core and its runtime dependencies are installed by Dockerfile.astrbot.
+# AstrBot itself is provided by the pinned base image and must not be reinstalled.

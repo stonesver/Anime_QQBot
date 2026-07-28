@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "anime-qqbot"
-version = "0.1.0"
-description = "A Docker-deployable QQ anime tracking bot backed by Bangumi."
+version = "0.2.0"
+description = "AstrBot-powered multi-source QQ anime tracking bot (Bangumi + AniList + Mikan)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 dependencies = [
   "alembic>=1.14,<2",
   "asyncpg>=0.30,<1",
-  "cryptography>=44,<47",
+  "defusedxml>=0.7.1,<1",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
   "pydantic-settings>=2.7,<3",
@@ -28,6 +28,7 @@ dev = [
   "pytest-asyncio>=0.25,<2",
   "respx>=0.22,<1",
   "ruff>=0.9,<1",
+  "types-defusedxml>=0.7.0.20250822",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -44,6 +45,10 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "ASYNC", "C4", "DTZ", "RUF"]
+# Chinese punctuation in user-facing strings is intentional; the
+# RUF001 rule treats it as "ambiguous" but our UI strings include
+# 「，」「。」「、」 etc. by design.
+ignore = ["RUF001"]
 
 [tool.ruff.format]
 quote-style = "double"

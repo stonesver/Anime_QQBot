@@ -5,7 +5,7 @@ role="${1:-worker}"
 shift || true
 
 case "$role" in
-  migrate|worker)
+  migrate|worker|map-mikan|map-anilist)
     exec python -m anime_qqbot.entrypoints.cli "$role" "$@"
     ;;
   *)

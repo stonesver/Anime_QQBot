@@ -1,3 +1,8 @@
-from anime_qqbot.subscriptions.module import SubscriptionManager
+"""Follow subscription persistence (v0.2.0)."""
 
-__all__ = ["SubscriptionManager"]
+from anime_qqbot.subscriptions.repository_v2 import (
+    FollowRepository,
+    FollowRow,
+)
+
+__all__ = ["FollowRepository", "FollowRow"]

@@ -1,22 +1,16 @@
-# Dockerfile.astrbot — v0.2.0 AstrBot image with the anime_tracking plugin.
-#
-# This image extends the official AstrBot image and pre-installs the
-# anime_tracking plugin. For the official AstrBot image reference see
-# https://github.com/Soulter/AstrBot
-#
-# If the upstream AstrBot image is not available at build time, mount
-# astrbot_plugin_anime_tracking/ as a volume instead (compose.yaml
-# fallback).
+# syntax=docker/dockerfile:1.7
+FROM soulter/astrbot:v4.26.7
 
-FROM soulter/astrbot:latest
+USER root
+WORKDIR /opt/anime-qqbot
 
-# Copy the plugin so AstrBot discovers it at startup.
-COPY astrbot_plugin_anime_tracking/ /app/plugin/astrbot_plugin_anime_tracking/
+COPY pyproject.toml README.md NOTICE ./
+COPY src ./src
+RUN python -m pip install --no-cache-dir .
 
-# Copy Anime Core source and migrations so the plugin can import them.
-COPY src/ /app/src/
-COPY migrations/ /app/migrations/
-COPY alembic.ini /app/
-COPY pyproject.toml /app/
+COPY astrbot_plugin_anime_tracking /AstrBot/data/plugins/astrbot_plugin_anime_tracking
 
-ENV PYTHONPATH=/app
+RUN python -c "import anime_qqbot" \
+    && python -c "import sys; sys.path.insert(0, '/AstrBot/data/plugins'); import astrbot_plugin_anime_tracking.main"
+
+WORKDIR /AstrBot

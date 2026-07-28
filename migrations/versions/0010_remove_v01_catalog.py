@@ -25,6 +25,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Mirror 0002_catalog_cache exactly: column order, types, default
+    # values, unique constraints and index names.
     op.create_table(
         "anime_subjects",
         sa.Column("subject_id", sa.BigInteger(), primary_key=True),
@@ -41,7 +43,7 @@ def downgrade() -> None:
     op.create_index("ix_anime_subjects_air_date", "anime_subjects", ["air_date"])
     op.create_table(
         "airing_schedules",
-        sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), primary_key=True),
         sa.Column(
             "subject_id",
             sa.BigInteger(),
@@ -54,6 +56,7 @@ def downgrade() -> None:
         sa.Column("episode", sa.Integer(), nullable=True),
         sa.Column("source", sa.String(32), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.UniqueConstraint("occurrence_key", name="uq_airing_schedules_occurrence_key"),
     )
     op.create_index("ix_airing_schedules_air_date", "airing_schedules", ["air_date"])
     op.create_table(

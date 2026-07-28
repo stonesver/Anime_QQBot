@@ -23,7 +23,8 @@ raw="$(mktemp "${TMPDIR:-/tmp}/anime-restore.XXXXXX.sql")"
 trap 'rm -f "$raw"' EXIT HUP INT TERM
 gzip -dc "$backup" > "$raw"
 
-docker compose stop bot worker
+docker compose stop worker astrbot napcat
+docker compose up -d --wait postgres
 docker compose exec -T postgres psql \
   --username anime \
   --dbname anime \
@@ -33,10 +34,12 @@ docker compose exec -T postgres psql \
   --username anime \
   --dbname anime \
   --set ON_ERROR_STOP=1 < "$raw"
-docker compose run --rm migrate
+docker compose run --rm --no-deps migrate
+docker compose run --rm --no-deps --entrypoint /bin/sh migrate \
+  -c 'alembic current | grep -q "0011_complete_mikan_pipeline (head)"'
 
 if [ "${RESTORE_SKIP_APP_START:-0}" != "1" ]; then
-  docker compose up -d bot worker
+  docker compose up -d --no-build --no-deps --wait worker astrbot napcat
 fi
 
-printf 'restore completed: %s\n' "$backup"
+printf 'restore completed and migration head verified: %s\n' "$backup"

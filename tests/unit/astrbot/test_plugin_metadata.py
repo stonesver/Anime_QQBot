@@ -30,11 +30,10 @@ def test_metadata_has_required_fields() -> None:
 
 def test_conf_schema_exposes_only_non_secret_keys() -> None:
     schema = json.loads((PLUGIN_DIR / "_conf_schema.json").read_text())
-    props = schema.get("properties", {})
 
-    assert isinstance(props, dict)
-    assert "password" not in props
-    assert "secret" not in props
+    assert all(isinstance(value, dict) and "type" in value for value in schema.values())
+    assert all("password" not in key for key in schema)
+    assert all("secret" not in key for key in schema)
 
 
 def test_plugin_directory_compiles_without_syntax_errors() -> None:
@@ -50,7 +49,13 @@ def test_requirements_file_is_parseable() -> None:
     lines = (PLUGIN_DIR / "requirements.txt").read_text().strip().splitlines()
     deps = [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
 
-    assert any("astrbot" in dep for dep in deps)
+    assert all(not dep.lower().startswith("astrbot") for dep in deps)
+
+
+def test_plugin_starts_consumer_on_astrbot_loaded() -> None:
+    source = (PLUGIN_DIR / "main.py").read_text()
+
+    assert "@filter.on_astrbot_loaded()" in source
 
 
 def test_fake_context_can_hold_lifecycle() -> None:
@@ -68,16 +73,26 @@ def test_fake_context_can_hold_lifecycle() -> None:
 
 @pytest.mark.asyncio
 async def test_lifecycle_start_stop_is_idempotent() -> None:
+    import os
+
     from astrbot_plugin_anime_tracking.anime_tracking_plugin.lifecycle import (
         PluginLifecycle,
     )
 
-    lc = PluginLifecycle()
-    await lc.start()
-    assert lc.running is True
-    await lc.start()
-    assert lc.running is True
-    await lc.shutdown()
-    assert lc.running is False
-    await lc.shutdown()
-    assert lc.running is False
+    previous = os.environ.get("DATABASE_URL")
+    os.environ["DATABASE_URL"] = "postgresql+asyncpg://example/test"
+    try:
+        lc = PluginLifecycle()
+        await lc.start()
+        assert lc.running is True
+        await lc.start()
+        assert lc.running is True
+        await lc.shutdown()
+        assert lc.running is False
+        await lc.shutdown()
+        assert lc.running is False
+    finally:
+        if previous is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = previous

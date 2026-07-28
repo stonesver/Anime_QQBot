@@ -150,7 +150,7 @@ def parse_fixed_command(content: str) -> Intent | ParseFailure:
         anime_id = rest[0]
         if not is_internal_id(anime_id):
             return ParseFailure("订阅设置 需要内部 ID")
-        language, groups, _resolutions, failure = _parse_settings(rest[1:])
+        language, groups, resolutions, failure = _parse_settings(rest[1:])
         if failure is not None:
             return failure
         return Intent(
@@ -158,6 +158,7 @@ def parse_fixed_command(content: str) -> Intent | ParseFailure:
             anime_id=anime_id,
             language=language,
             subtitle_groups=groups,
+            resolutions=resolutions,
             raw=raw,
         )
 
@@ -223,11 +224,23 @@ def _parse_settings(
             return None, (), (), ParseFailure("订阅设置 必须使用 key=value 形式")
         key, value = part.split("=", 1)
         if key == "语言":
-            language = value
+            normalized = value.casefold()
+            if normalized in {"简体", "简", "chs", "sc"}:
+                language = "chs"
+            elif normalized in {"繁体", "繁", "cht", "tc"}:
+                language = "cht"
+            elif normalized == "不限":
+                language = None
+            else:
+                return None, (), (), ParseFailure("语言 必须是 简体/繁体/不限")
         elif key == "字幕组":
-            groups = tuple(value.split(","))
+            groups = () if value == "不限" else tuple(item for item in value.split(",") if item)
         elif key == "分辨率":
-            resolutions = tuple(value.split(","))
+            resolutions = (
+                ()
+                if value == "不限"
+                else tuple(item.casefold() for item in value.split(",") if item)
+            )
         else:
             return None, (), (), ParseFailure(f"订阅设置 不支持的字段: {key}")
     return language, groups, resolutions, None

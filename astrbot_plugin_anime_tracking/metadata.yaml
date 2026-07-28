@@ -4,4 +4,4 @@ version: 0.2.0
 author: stonesver
 support_platforms:
   - aiocqhttp
-astrbot_min_version: ">=3.6.0"
+astrbot_version: ">=4.26,<5"

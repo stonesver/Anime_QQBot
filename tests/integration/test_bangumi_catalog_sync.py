@@ -3,24 +3,31 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from anime_qqbot.catalog.bangumi_sync import BangumiCatalogSync
-from anime_qqbot.catalog.models import AnimeDetail
+from anime_qqbot.catalog.models import AiringOccurrence, AnimeDetail
 from anime_qqbot.catalog.ports import BangumiProvider
 from anime_qqbot.catalog.repository_v2 import (
     CatalogReadRepository,
     CatalogWriteRepository,
 )
+from anime_qqbot.persistence.models.catalog import AiringOccurrenceRow
 
 
 class _StubBangumi(BangumiProvider):
-    def __init__(self, detail: AnimeDetail | None) -> None:
+    def __init__(
+        self,
+        detail: AnimeDetail | None,
+        occurrences: list[AiringOccurrence] | None = None,
+    ) -> None:
         self._detail = detail
+        self._occurrences = occurrences or []
         self.calls = 0
 
     async def search(self, query: str) -> list[Any]:
@@ -34,7 +41,7 @@ class _StubBangumi(BangumiProvider):
         return []
 
     async def episodes(self, subject_id: int) -> list[Any]:
-        return []
+        return list(self._occurrences)
 
 
 def _engine():
@@ -178,3 +185,28 @@ async def test_old_anime_subjects_table_is_not_needed(session_factory) -> None:
 
     assert result.is_new_anime is True
     # The new catalog is fully self-contained.
+
+
+async def test_sync_subject_persists_date_only_airing_occurrences(session_factory) -> None:
+    occurrence = AiringOccurrence(
+        subject_id=42,
+        air_date=date(2026, 7, 28),
+        air_at=None,
+        episode=3,
+        source="bangumi",
+        updated_at=datetime(2026, 7, 28, 1, 0, tzinfo=UTC),
+    )
+    sync = BangumiCatalogSync(
+        _StubBangumi(_detail(), [occurrence]),
+        CatalogWriteRepository(session_factory),
+    )
+
+    result = await sync.sync_subject(42)
+    await sync.sync_subject(42)
+
+    async with session_factory() as session:
+        rows = (await session.execute(select(AiringOccurrenceRow))).scalars().all()
+    assert len(rows) == 1
+    assert rows[0].anime_id == result.anime_id
+    assert rows[0].episode_label == "03"
+    assert rows[0].precision == "date_only"

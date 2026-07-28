@@ -66,4 +66,5 @@ def test_catalog_cache_defaults() -> None:
     settings = make_settings()
 
     assert settings.catalog_cache_ttl_seconds == 3600
+    assert settings.bangumi_data_sync_seconds == 21600
     assert settings.worker_scan_seconds == 30

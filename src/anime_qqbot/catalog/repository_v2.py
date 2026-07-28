@@ -21,7 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from anime_qqbot.catalog.models import AiringOccurrence
 from anime_qqbot.persistence.models.catalog import (
+    AiringOccurrenceRow,
     Anime,
     AnimeSourceLink,
     AnimeTitle,
@@ -219,6 +221,55 @@ class CatalogWriteRepository:
             await session.commit()
             await session.refresh(t)
             return t
+
+    async def upsert_airing_occurrences(
+        self,
+        *,
+        anime_id: UUID,
+        source_entry_id: UUID,
+        occurrences: list[AiringOccurrence],
+    ) -> int:
+        """Persist provider schedule rows idempotently."""
+        written = 0
+        async with self._session_factory() as session, session.begin():
+            for occurrence in occurrences:
+                episode_label = (
+                    f"{occurrence.episode:02d}" if occurrence.episode is not None else "?"
+                )
+                event_key = (
+                    f"{occurrence.source}:{episode_label}:"
+                    f"{occurrence.air_at.isoformat() if occurrence.air_at else occurrence.air_date}"
+                )
+                stmt = (
+                    pg_insert(AiringOccurrenceRow)
+                    .values(
+                        id=uuid4(),
+                        anime_id=anime_id,
+                        source_entry_id=source_entry_id,
+                        episode_label=episode_label,
+                        air_date=occurrence.air_date,
+                        air_at=occurrence.air_at,
+                        precision="exact" if occurrence.air_at is not None else "date_only",
+                        source_event_key=event_key,
+                        updated_at=occurrence.updated_at or datetime.now(UTC),
+                    )
+                    .on_conflict_do_update(
+                        constraint="uq_airing_occurrences_event",
+                        set_={
+                            "anime_id": anime_id,
+                            "episode_label": episode_label,
+                            "air_date": occurrence.air_date,
+                            "air_at": occurrence.air_at,
+                            "precision": (
+                                "exact" if occurrence.air_at is not None else "date_only"
+                            ),
+                            "updated_at": occurrence.updated_at or datetime.now(UTC),
+                        },
+                    )
+                )
+                await session.execute(stmt)
+                written += 1
+        return written
 
     async def disable_anime(self, anime_id: UUID) -> None:
         async with self._session_factory() as session:

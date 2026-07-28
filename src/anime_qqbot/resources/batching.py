@@ -34,9 +34,29 @@ class BatchManager:
         subtitle_groups: tuple[str, ...] = (),
         resolutions: tuple[str, ...] = (),
     ) -> list[object]:
-        # In production, this matches ParsedRelease fields against the
-        # user's SubscriptionResourceFilter. Stub for now.
-        return releases[:5]  # max 5 per message
+        wanted_language = language.casefold() if language else None
+        wanted_groups = {value.casefold() for value in subtitle_groups}
+        wanted_resolutions = {value.casefold() for value in resolutions}
+        matched: list[object] = []
+        for release in releases:
+            actual_language = getattr(release, "language", None)
+            actual_groups = {
+                str(value).casefold() for value in getattr(release, "subtitle_groups", ())
+            }
+            actual_resolutions = {
+                str(value).casefold() for value in getattr(release, "resolutions", ())
+            }
+            if wanted_language and (
+                not isinstance(actual_language, str)
+                or actual_language.casefold() != wanted_language
+            ):
+                continue
+            if wanted_groups and wanted_groups.isdisjoint(actual_groups):
+                continue
+            if wanted_resolutions and wanted_resolutions.isdisjoint(actual_resolutions):
+                continue
+            matched.append(release)
+        return matched
 
 
 def format_batch_message(batch: BatchResult) -> str:

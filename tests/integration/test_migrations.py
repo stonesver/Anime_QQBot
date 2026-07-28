@@ -1,0 +1,175 @@
+"""Migration round-trip tests for v0.2.0 schema.
+
+Each test wipes the database, runs its scenario, and re-applies
+the migrations to ``head`` so that downstream tests can still
+connect to a valid schema.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from pathlib import Path
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+ROOT = Path(__file__).resolve().parents[2]
+ALEMBIC_INI = ROOT / "alembic.ini"
+DB_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "postgresql+asyncpg://anime:anime@127.0.0.1:55432/anime_test",
+)
+
+
+@pytest.fixture(autouse=True)
+def _restore_head() -> None:
+    """Always end with the schema at head so the rest of the suite
+    continues to find the expected tables.
+    """
+    yield
+    _run_command("head")
+
+
+def _alembic_config() -> Config:
+    cfg = Config(str(ALEMBIC_INI))
+    cfg.set_main_option("script_location", str(ROOT / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", DB_URL)
+    return cfg
+
+
+def _run_command(target: str) -> None:
+    """Upgrade or downgrade to ``target``.
+
+    Use ``+`` prefix to force an upgrade, ``-`` prefix to force a
+    downgrade. Without a prefix we try upgrade first, falling back
+    to downgrade if the target is at or below the current revision.
+    """
+    cfg = _alembic_config()
+    if target.startswith("+"):
+        command.upgrade(cfg, target[1:])
+        return
+    if target.startswith("-"):
+        command.downgrade(cfg, target[1:])
+        return
+    # Try upgrade; if it raises a RangeNotAncestorError we fall back.
+    try:
+        command.upgrade(cfg, target)
+    except Exception:
+        command.downgrade(cfg, target)
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+async def _drop_public() -> None:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP SCHEMA public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+    finally:
+        await engine.dispose()
+
+
+async def _has_table(name: str) -> bool:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("SELECT 1 FROM information_schema.tables WHERE table_name = :n"),
+                    {"n": name},
+                )
+            ).first()
+        return row is not None
+    finally:
+        await engine.dispose()
+
+
+async def _has_index(name: str) -> bool:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.connect() as conn:
+            row = (
+                await conn.execute(
+                    text("SELECT 1 FROM pg_indexes WHERE indexname = :n"),
+                    {"n": name},
+                )
+            ).first()
+        return row is not None
+    finally:
+        await engine.dispose()
+
+
+async def _index_for(table: str) -> list[str]:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text("SELECT indexname FROM pg_indexes WHERE tablename = :t"),
+                    {"t": table},
+                )
+            ).all()
+        return [r[0] for r in rows]
+    finally:
+        await engine.dispose()
+
+
+def test_empty_database_base_to_head() -> None:
+    _run(_drop_public())
+    _run_command("+head")
+    assert not _run(_has_table("anime_subjects"))
+    assert _run(_has_table("animes"))
+    assert _run(_has_table("follow_subscriptions"))
+    assert _run(_has_table("release_batches"))
+    assert _run(_has_table("release_batch_items"))
+    assert _run(_has_table("mikan_feed_states"))
+
+
+def test_head_round_trip() -> None:
+    _run(_drop_public())
+    _run_command("+head")
+    _run_command("-base")
+    assert not _run(_has_table("animes"))
+    assert not _run(_has_table("follow_subscriptions"))
+    assert not _run(_has_table("anime_subjects"))
+    _run_command("+head")
+    assert _run(_has_table("animes"))
+    assert not _run(_has_table("anime_subjects"))
+    assert _run(_has_table("release_batch_items"))
+    assert _run(_has_table("mikan_feed_states"))
+
+
+def test_0004_snapshot_forward() -> None:
+    _run(_drop_public())
+    _run_command("+0004")
+    assert _run(_has_table("group_schedules"))
+    assert _run(_has_index("ix_notification_jobs_claim"))
+    assert _run(_has_index("ix_group_schedules_due"))
+    _run_command("+head")
+    assert not _run(_has_table("group_schedules"))
+    assert not _run(_has_index("ix_notification_jobs_claim"))
+    assert not _run(_has_index("ix_group_schedules_due"))
+    assert _run(_has_table("follow_subscriptions"))
+    assert _run(_has_table("release_batches"))
+
+
+def test_downgrade_recreates_indexes_and_constraints() -> None:
+    _run(_drop_public())
+    _run_command("+head")
+    # Downgrade to 0006 forces the 0007 downgrade to run, which is the
+    # migration responsible for recreating ix_notification_jobs_claim
+    # and ix_group_schedules_due.
+    _run_command("-0006")
+    indexes = _run(_index_for("notification_jobs"))
+    assert "ix_notification_jobs_claim" in indexes, f"got {indexes}"
+    indexes = _run(_index_for("group_schedules"))
+    assert "ix_group_schedules_due" in indexes, f"got {indexes}"
+    assert _run(_has_table("notification_jobs"))
+    assert _run(_has_table("group_schedules"))

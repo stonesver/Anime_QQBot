@@ -10,9 +10,10 @@ from anime_qqbot.persistence.base import Base
 from anime_qqbot.persistence.models import (  # noqa: F401
     catalog,
     identity,
-    notifications,
+    notifications_v2,
+    resources,
     runtime,
-    subscriptions,
+    subscriptions_v2,
 )
 
 config = context.config
