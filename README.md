@@ -70,6 +70,9 @@ ACR 仓库拉取，生产部署不再依赖服务器直连 Docker Hub。
 ./scripts/deploy-acr.sh --no-backup
 ```
 
+日常应用发布不会刷新或协调已经运行的 NapCat；固定第三方镜像维护使用显式
+`--refresh-vendors`。发布脚本会输出 NapCat 发布前后指纹和是否重启。
+
 - AstrBot WebUI：`http://127.0.0.1:6185`
 - NapCat WebUI：`http://127.0.0.1:6099`
 

@@ -1,7 +1,9 @@
 # v0.2.0 单镜像 ACR 部署设计
 
 日期：2026-07-28  
-状态：已完成对话设计确认，等待书面确认后实施
+状态：已实施；NapCat 生命周期部分由
+[NapCat 发布隔离与 QQ 小号风险控制设计](2026-07-29-napcat-release-isolation-design.md)
+补充
 
 ## 1. 目标
 
@@ -199,12 +201,13 @@ sudo docker login \
 4. 如果 PostgreSQL 正在运行且未指定跳过备份，创建压缩备份；
 5. 如果存在当前 Worker/AstrBot，保存其镜像 ID为 `anime-qqbot:rollback`；
 6. 拉取 ACR 应用镜像；
-7. 拉取固定版本 PostgreSQL 和 NapCat 镜像；
+7. 只补拉本机缺失的固定 PostgreSQL/NapCat 镜像；显式维护窗口才刷新 vendor；
 8. 启动 PostgreSQL并等待健康；
 9. 独立执行 migration，要求退出码 0；
 10. 用 `--no-build --pull never` 启动 Worker/AstrBot并等待健康；
-11. 启动 NapCat 并等待健康；
-12. 输出应用镜像 ID/digest、备份位置、Compose 状态和 WebUI SSH 隧道提示。
+11. 首次部署启动 NapCat；日常发布保留其运行或停止状态；
+12. 输出应用镜像 ID/digest、备份位置、NapCat 前后指纹、Compose 状态和 WebUI
+    SSH 隧道提示。
 
 部署脚本不得执行 `docker build`、`docker image prune`、`docker system prune` 或
 `docker volume prune`。
@@ -217,7 +220,8 @@ sudo docker login \
 | ACR 未登录/拉取失败 | 保持现有服务与镜像不变 |
 | PostgreSQL不健康 | 停止发布 |
 | migration 失败 | 停止发布，不自动恢复数据库 |
-| Worker/AstrBot/NapCat 不健康 | 把 rollback 镜像重新标记为应用引用并重建应用服务 |
+| Worker/AstrBot 不健康 | 把 rollback 镜像重新标记为应用引用并重建 Worker/AstrBot |
+| NapCat 不健康 | 保留独立状态并人工处理，不参加应用镜像回滚 |
 | 首次部署失败 | 明确报告没有可用应用回滚镜像 |
 | 信号中断 | 若已进入替换阶段则尝试应用镜像回滚 |
 
@@ -237,9 +241,12 @@ sudo docker login \
 7. 跳过备份只跳过备份，不跳过 migration；
 8. 拉取失败不会重建服务；
 9. migration 失败不会启动新应用；
-10. 健康失败恢复旧镜像并重建 Worker/AstrBot/NapCat；
-11. 部署包只包含白名单资产且不包含秘密；
-12. 2 GiB 覆盖配置被 Compose 正确合并。
+10. 应用健康失败恢复旧镜像并只重建 Worker/AstrBot；
+11. 日常升级不拉取 vendor、不协调 NapCat，显式刷新除外；
+12. 已停止的 NapCat 在应用发布后仍保持停止；
+13. 输出 NapCat 发布前后指纹和重启判断；
+14. 部署包只包含白名单资产且不包含秘密；
+15. 2 GiB 覆盖配置被 Compose 正确合并。
 
 最终门禁：
 

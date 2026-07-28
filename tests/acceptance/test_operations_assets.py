@@ -27,6 +27,9 @@ def test_acr_deploy_script_is_the_only_active_deploy_interface() -> None:
     assert "astrbot" in text
     assert "ONEBOT_TOKEN" in text
     assert "docker compose run --rm --no-deps migrate" in text
+    assert "--refresh-vendors" in text
+    assert "NapCat restart detected:" in text
+    assert "worker astrbot napcat" not in text
     assert "docker build" not in text
     assert not Path("scripts/deploy-multisource.sh").exists()
 
@@ -46,5 +49,6 @@ def test_documented_links_and_secret_files() -> None:
     assert "docs/operations.md" in readme
     assert (root / "docs/deployment.md").is_file()
     assert (root / "docs/operations.md").is_file()
+    assert (root / "docs/superpowers/specs/2026-07-29-napcat-release-isolation-design.md").is_file()
     assert ".env" in (root / ".gitignore").read_text().splitlines()
     assert ".env" in (root / ".dockerignore").read_text().splitlines()

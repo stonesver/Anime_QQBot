@@ -20,8 +20,9 @@ COMPOSE_FILE=compose.yaml:compose.server-2g.yaml
 这样五个单元会套用 2 GiB 主机资源上限。不要对整台主机运行 Docker 全局 prune；
 OurNotes 和其他服务不属于本项目。
 
-应用、PostgreSQL 和 NapCat 都从 `stonesver/anime-qqbot` ACR 仓库的固定标签拉取。
-服务器不应依赖 Docker Hub 加速器；两个 vendor 标签只在上游固定版本变化时更新。
+应用、PostgreSQL 和 NapCat 都从 `stonesver/anime-qqbot` ACR 仓库拉取。日常发布只
+刷新应用 `latest`；两个 vendor 标签只在上游固定版本变化时人工构建并通过
+`--refresh-vendors` 更新。
 
 ## ACR 升级与应用回滚
 
@@ -33,11 +34,25 @@ cd /opt/anime-qqbot
 ```
 
 部署脚本记录实际镜像 ID/digest，不能仅用可变的 `latest` 判断版本。已有应用容器时，
-升级前镜像会保存为 `anime-qqbot:rollback`。Worker、AstrBot 或 NapCat 健康失败时
-会自动把该镜像重新标记为生产引用并重建三个运行单元。
+升级前应用镜像会保存为 `anime-qqbot:rollback`。Worker 或 AstrBot 健康失败时会
+自动把该镜像重新标记为生产引用并只重建这两个应用运行单元。NapCat 独立于应用
+回滚，日常发布不会协调运行中的 NapCat，也不会唤醒已停止的 NapCat。
 
 拉取失败不会替换运行服务；migration 失败会停止发布、恢复旧应用镜像引用，但不会
 自动恢复数据库。首次部署没有旧镜像时无法应用回滚，脚本会明确退出并保留日志供排查。
+
+发布完成后检查：
+
+```bash
+./scripts/deploy-acr.sh
+# 预期：NapCat restart detected: no
+```
+
+只有 NapCat/PostgreSQL 固定镜像确实需要维护时使用：
+
+```bash
+./scripts/deploy-acr.sh --refresh-vendors
+```
 
 ## 常见故障
 
@@ -106,6 +121,28 @@ Mikan 更新不会再投递，以免服务恢复后刷屏。
 - 同群主动提醒至少间隔 60 秒，每 10 分钟最多 3 次；
 - 先在单个测试群开启短命令，观察 24 小时后再扩大；
 - 不用机器人做刷屏、群发、主动拉人或高频自动回复。
+
+### QQ 安全中心提示异常登录
+
+先停止自动登录和发送，避免连续重试：
+
+```bash
+docker compose stop worker astrbot napcat
+```
+
+在手机 QQ／QQ 安全中心核对异常记录的时间、地点和设备。记录与服务器登录一致时，
+仍需等待限制解除后只扫码一次；出现未知设备、地点或时间时，按账号泄露处理：下线
+陌生设备、修改密码并保留设备验证。不要为接入 NapCat 永久关闭账号安全保护。
+
+确认 `napcat-qq` 和 `napcat-config` 卷仍存在：
+
+```bash
+docker compose config --volumes
+docker volume ls | grep -E 'napcat-(qq|config)'
+```
+
+恢复前确认账号在手机端稳定、NapCat 容器不会被发布脚本意外重建。专用小号不得保存
+支付资产或重要联系人；非官方接入无法保证没有登录、社交或发送限制风险。
 
 ### 为番剧确认 Mikan 映射
 

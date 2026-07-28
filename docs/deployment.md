@@ -16,12 +16,13 @@
 
 | Dockerfile | 镜像版本 | 架构 | 海外机器构建 |
 |---|---|---|---|
-| `Dockerfile` | `latest` | `linux/amd64` | 按现有成功规则 |
-| `Dockerfile.postgres` | `vendor-postgres-17.4-alpine` | `linux/amd64` | 开启 |
-| `Dockerfile.napcat` | `vendor-napcat-v4.18.13` | `linux/amd64` | 开启 |
+| `Dockerfile` | `latest` | `linux/amd64` | 自动 |
+| `Dockerfile.postgres` | `vendor-postgres-17.4-alpine` | `linux/amd64` | 人工 |
+| `Dockerfile.napcat` | `vendor-napcat-v4.18.13` | `linux/amd64` | 人工 |
 
-三条规则都使用 Branch `main`、构建上下文 `/`，并开启代码变更自动构建。必须先看到
-三个标签全部构建成功，再操作生产服务器。服务器随后只访问 ACR，不再直接访问
+三条规则都使用 Branch `main`、构建上下文 `/`。只有应用 `latest` 随代码变化自动
+构建；两个 vendor 规则只在固定第三方版本变化时人工触发，避免普通应用发布改变
+NapCat 镜像。首次部署必须先看到三个标签全部存在。服务器只访问 ACR，不直接访问
 Docker Hub。
 
 ## 2. 生成和上传最小部署包
@@ -91,10 +92,10 @@ sudo docker compose ps
 
 1. 校验配置并取得部署锁；
 2. 在可用时备份数据库和保存旧应用镜像；
-3. 从 ACR 拉取应用镜像及两个固定版本 vendor 镜像；
+3. 从 ACR 拉取应用镜像；首次部署时补拉缺失的固定 vendor 镜像；
 4. 等待 PostgreSQL、执行 migration；
-5. 依次启动 Worker/AstrBot 和 NapCat；
-6. 输出实际镜像 ID、digest、备份路径和 Compose 状态。
+5. 更新 Worker/AstrBot；运行中的 NapCat 保持原容器，已停止的 NapCat 保持停止；
+6. 输出实际镜像 ID、digest、备份路径、NapCat 发布前后指纹和 Compose 状态。
 
 脚本不会清理全局镜像、卷或网络，也不会操作 OpenClaw、Nginx 或 OurNotes。
 
@@ -160,8 +161,9 @@ free -h
 docker stats --no-stream
 ```
 
-预期 PostgreSQL、Worker、AstrBot、NapCat 为 healthy，migration 退出码为 0。
-容器健康不代表 QQ 已登录；仍需检查 OneBot 日志和真实测试群消息。
+正常运行状态下预期 PostgreSQL、Worker、AstrBot、NapCat 为 healthy，migration
+退出码为 0。若 NapCat 在发布前被人工停止，脚本会保留该状态并给出提示。容器健康
+不代表 QQ 已登录；仍需检查 OneBot 日志和真实测试群消息。
 
 ## 7. 日常升级
 
@@ -173,5 +175,15 @@ sudo ./scripts/deploy-acr.sh
 ```
 
 已有运行版本时，脚本会在拉取前创建数据库备份，并把当前应用镜像保存为
-`anime-qqbot:rollback`。应用健康失败会自动恢复旧镜像；migration 失败不会自动
-恢复数据库，请按[运维手册](operations.md)人工处理。
+`anime-qqbot:rollback`。应用健康失败会自动恢复旧镜像并只重建 Worker/AstrBot；
+NapCat 不参与应用回滚。migration 失败不会自动恢复数据库，请按
+[运维手册](operations.md)人工处理。
+
+只有明确安排固定第三方镜像维护窗口时才执行：
+
+```bash
+sudo ./scripts/deploy-acr.sh --refresh-vendors
+```
+
+正常发布结果应包含 `NapCat restart detected: no`。若为 `yes`，先核对是否执行了
+vendor 刷新、NapCat 是否原本停止或容器是否发生异常重启，再进行 QQ 登录。
