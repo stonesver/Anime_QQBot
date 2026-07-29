@@ -31,9 +31,9 @@ DB = os.environ.get(
 
 class FakeContext:
     def __init__(self) -> None:
-        self.sent: list[tuple[str, list[object]]] = []
+        self.sent: list[tuple[str, object]] = []
 
-    async def send_message(self, umo: str, chain: list[object]) -> None:
+    async def send_message(self, umo: str, chain: object) -> None:
         self.sent.append((umo, chain))
 
 
@@ -154,8 +154,9 @@ async def test_dispatcher_calls_send_message_with_db_umo(_clean: None) -> None:
     assert len(ctx.sent) == 1
     umo, chain = ctx.sent[0]
     assert umo == "umo-real-1"
-    assert any(item.get("type") == "at" for item in chain)
-    assert any(item.get("type") == "plain" for item in chain)
+    assert hasattr(chain, "chain")
+    assert any(item.get("type") == "at" for item in chain.chain)
+    assert any(item.get("type") == "plain" for item in chain.chain)
     assert await _read_status(job_id, lc.sessions) == "sent"
     await d.stop()
     await lc.shutdown()
@@ -167,7 +168,7 @@ async def test_dispatcher_marks_failed_when_send_raises(_clean: None) -> None:
     job_id = await _seed_job()
 
     class RaisingCtx(FakeContext):
-        async def send_message(self, umo: str, chain: list[object]) -> None:
+        async def send_message(self, umo: str, chain: object) -> None:
             raise RuntimeError("down")
 
     lc = PluginLifecycle(context=RaisingCtx(), start_dispatcher=False)

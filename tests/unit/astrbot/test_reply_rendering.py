@@ -9,6 +9,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import Reply
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.rendering import (
+    render_airing_notification,
+    render_release_batch,
     render_reply,
     reply_to_event_result,
 )
@@ -47,6 +49,33 @@ def test_local_cached_png_becomes_image_then_plain_chain(tmp_path: Path) -> None
         {"type": "image", "file": str(card)},
         {"type": "plain", "text": "追番提示"},
     ]
+
+
+@pytest.mark.parametrize(
+    ("renderer", "payload"),
+    [
+        (
+            render_airing_notification,
+            {
+                "display_title": "测试番剧",
+                "episode_label": "01",
+                "at_user_ids": ["1486315284"],
+            },
+        ),
+        (
+            render_release_batch,
+            {
+                "text": "[资源发布] 测试番剧 第01集",
+                "at_user_ids": ["1486315284"],
+            },
+        ),
+    ],
+)
+def test_notification_renderer_returns_message_chain(renderer, payload) -> None:
+    rendered = renderer(payload)
+
+    assert hasattr(rendered, "chain")
+    assert [item["type"] for item in rendered.chain] == ["at", "plain"]
 
 
 @pytest.mark.parametrize(

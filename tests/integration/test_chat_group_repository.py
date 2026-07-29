@@ -109,6 +109,20 @@ async def test_disabled_groups_can_still_appear(session_factory) -> None:
     assert row.enabled is True
 
 
+@pytest.mark.parametrize(
+    ("group", "user"),
+    [
+        ("", "654321"),
+        ("123456", ""),
+    ],
+)
+async def test_empty_group_identity_is_rejected(session_factory, group: str, user: str) -> None:
+    repo = ChatGroupRepository(session_factory)
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        await repo.upsert_group_event(_event(group=group, user=user))
+
+
 async def test_find_by_external(session_factory) -> None:
     repo = ChatGroupRepository(session_factory)
     await repo.upsert_group_event(_event())

@@ -303,6 +303,9 @@ class EventAdapter:
         timezone_name: str = "Asia/Shanghai",
         now: datetime | None = None,
     ) -> Reply:
+        if platform == "qq" and (not group_id.strip() or not user_id.strip()):
+            return Reply.from_error("无法识别当前群或用户，未执行操作")
+
         ctx = ChatContext(
             platform=platform,
             group_id=group_id,
