@@ -70,6 +70,11 @@ native 比较”扩展为：
 - 新确认链接直接补一次放送计划，不重复拉取同一媒体详情；
 - 刷新遇到 rate limit 后立即停止该小批量，不继续消耗请求。
 
+生产验证还发现 Worker 的周期海报预热会把全部历史 `SourceSnapshot` 取回 Python 后再
+去重，在 192 MiB 容器限制下触发 memcg OOM。修正为数据库内按
+`anime_id + provider` 选最新快照，并最多向 Worker 返回 `limit * 2` 行；不改变海报
+来源优先级、缓存目录或其他服务内存配额。
+
 ## 6. 来源状态
 
 一次目录周期中 Bangumi calendar discovery 与已知条目 ingest 都成功后，写入 Bangumi

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +9,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from PIL import Image
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from anime_qqbot.persistence.models.catalog import (
@@ -120,3 +121,44 @@ async def test_uses_bangumi_first_and_anilist_as_validation_fallback(
     assert calls == ["/bangumi.png", "/anilist.png"]
     assert cache.find_local_poster(anime_id) is not None
     await client.aclose()
+
+
+async def test_only_latest_snapshot_per_source_reaches_worker_memory(
+    sessions,
+    tmp_path: Path,
+) -> None:
+    anime_id = await seed_candidates(sessions)
+    now = datetime(2026, 7, 29, 9, tzinfo=UTC)
+    async with sessions() as session, session.begin():
+        entries = (
+            (await session.execute(select(ExternalEntry).order_by(ExternalEntry.provider)))
+            .scalars()
+            .all()
+        )
+        for entry in entries:
+            for version in range(2, 52):
+                session.add(
+                    SourceSnapshot(
+                        id=uuid4(),
+                        external_entry_id=entry.id,
+                        version=version,
+                        payload={
+                            "image_url": (f"https://example.com/{entry.provider}-{version}.png")
+                        },
+                        source_time=now + timedelta(seconds=version),
+                        fetched_at=now + timedelta(seconds=version),
+                    )
+                )
+
+    cache = PosterCache(tmp_path, client=httpx.AsyncClient())
+    candidates = await PosterWarmupService(sessions, cache)._candidates(
+        limit=1,
+        anime_ids={anime_id},
+    )
+
+    assert len(candidates) == 2
+    assert {candidate.url for candidate in candidates} == {
+        "https://example.com/anilist-51.png",
+        "https://example.com/bangumi-51.png",
+    }
+    await cache.aclose()
