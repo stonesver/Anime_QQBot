@@ -88,6 +88,8 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://anime:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/anime
       ONEBOT_TOKEN: ${ONEBOT_TOKEN:?ONEBOT_TOKEN must be set}
+      NAPCAT_ONEBOT_URL: http://napcat:3000
+      NAPCAT_STATUS_POLL_SECONDS: 60
       CARD_ASSET_ROOT: /var/lib/anime-qqbot/cards
       ANIME_CARD_CJK_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
       ANIME_CARD_MONO_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf

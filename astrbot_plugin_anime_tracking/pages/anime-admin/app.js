@@ -1,6 +1,7 @@
 const bridge = window.AstrBotPluginPage;
-const state = { view: "overview", groups: [], writesEnabled: true };
+const state = { view: "overview", groups: [], writesEnabled: true, overviewLoading: false };
 const $ = (selector) => document.querySelector(selector);
+const OVERVIEW_REFRESH_MS = 30_000;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -40,10 +41,44 @@ async function confirmAction(title, message) {
   });
 }
 
-async function loadOverview() {
-  loading("#overview-grid");
+const napcatStates = {
+  unknown: ["尚未检测 QQ 会话", "等待 AstrBot 完成首次 NapCat 状态探测。"],
+  online: ["QQ 会话在线", "NapCat 可达，QQ 当前可以接收和发送群消息。"],
+  qq_offline: ["QQ 会话已离线", "NapCat 进程仍在，但 QQ 登录已经失效。"],
+  unreachable: ["NapCat 状态接口不可达", "已连续三次无法取得 QQ 会话状态。"],
+};
+
+function napcatLabel(value) {
+  return napcatStates[value]?.[0] || napcatStates.unknown[0];
+}
+
+function renderNapcatStatus(payload = {}) {
+  const value = napcatStates[payload.status] ? payload.status : "unknown";
+  const banner = $("#napcat-banner");
+  banner.className = `session-banner ${value}`;
+  $("#napcat-status-label").textContent = napcatStates[value][0];
+  $("#napcat-status-detail").textContent = napcatStates[value][1];
+  $("#napcat-observed-at").textContent = formatTime(payload.observed_at);
+  $("#napcat-changed-at").textContent = formatTime(payload.status_changed_at);
+  $("#napcat-offline-since").textContent = formatTime(payload.offline_since);
+  $("#napcat-recovery").hidden = value !== "qq_offline";
+
+  const events = Array.isArray(payload.recent_events) ? payload.recent_events : [];
+  $("#napcat-history").innerHTML = events.length ? events.map((event) => `
+    <div class="history-row">
+      <span class="history-time">${formatTime(event.occurred_at)}</span>
+      <span>${event.previous_status ? `${escapeHtml(napcatLabel(event.previous_status))} → ` : ""}<strong>${escapeHtml(napcatLabel(event.status))}</strong></span>
+    </div>
+  `).join("") : empty("还没有状态变化记录。");
+}
+
+async function loadOverview(showLoading = true) {
+  if (state.overviewLoading) return;
+  state.overviewLoading = true;
+  if (showLoading) loading("#overview-grid");
   try {
     const data = await bridge.apiGet("overview");
+    renderNapcatStatus(data.napcat_status);
     const metrics = [
       ["已登记群", data.groups], ["有效订阅", data.subscriptions],
       ["等待通知", data.pending_notifications], ["异常通知", data.failed_notifications],
@@ -52,7 +87,11 @@ async function loadOverview() {
     $("#overview-grid").innerHTML = metrics.map(([label, value]) =>
       `<article class="metric"><span>${label}</span><strong>${value}</strong></article>`
     ).join("");
-  } catch (reason) { error("#overview-grid", reason); }
+  } catch (reason) {
+    if (showLoading) error("#overview-grid", reason);
+  } finally {
+    state.overviewLoading = false;
+  }
 }
 
 async function loadGroups() {
@@ -193,6 +232,9 @@ try {
   $(".live-dot").classList.add("ready");
   $("#connection-label").textContent = "已连接 AstrBot";
   await loadOverview();
+  window.setInterval(() => {
+    if (state.view === "overview" && !document.hidden) loadOverview(false);
+  }, OVERVIEW_REFRESH_MS);
 } catch (reason) {
   $("#connection-label").textContent = "连接失败";
   error("#overview-grid", reason);

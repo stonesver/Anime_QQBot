@@ -19,9 +19,16 @@ def test_plugin_page_is_discoverable_and_self_contained() -> None:
 
 def test_page_covers_all_operations_sections_and_mobile() -> None:
     html = (PAGE / "index.html").read_text()
+    script = (PAGE / "app.js").read_text()
     styles = (PAGE / "styles.css").read_text()
 
     for label in ("总览", "群设置", "订阅", "映射", "通知", "数据源"):
         assert label in html
     assert "560px" in styles
     assert "prefers-reduced-motion" in styles
+    assert 'id="napcat-banner"' in html
+    assert 'id="napcat-history"' in html
+    assert "docker compose restart napcat" in html
+    assert "30_000" in script
+    assert "qq_offline" in script
+    assert ".session-banner" in styles

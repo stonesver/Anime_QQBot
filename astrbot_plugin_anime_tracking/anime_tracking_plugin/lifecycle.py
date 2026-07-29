@@ -23,6 +23,13 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from anime_qqbot.notifications.governor import GovernorLimits, SendGovernor
+from anime_qqbot.operations.napcat_status import (
+    NapCatOneBotClient,
+    NapCatStatusMonitor,
+)
+from anime_qqbot.operations.runtime_status_repository import (
+    RuntimeComponentStatusRepository,
+)
 from anime_qqbot.persistence.session import create_engine, create_session_factory
 from anime_qqbot.presentation.assembler import CardDataAssembler
 from anime_qqbot.presentation.poster_cache import PosterCache
@@ -54,6 +61,7 @@ class PluginLifecycle:
         self._engine: AsyncEngine | None = None
         self.sessions: async_sessionmaker[AsyncSession] | None = None
         self.dispatcher: Any | None = None
+        self.napcat_monitor: NapCatStatusMonitor | None = None
         self.card_reply_factory: Any | None = None
         self._local_poster_cache: PosterCache | None = None
         self.governor = SendGovernor(limits=self._governor_limits())
@@ -78,15 +86,25 @@ class PluginLifecycle:
         self._running = True
         try:
             self._start_card_presentation()
+            self._start_napcat_monitor()
             if self._start_dispatcher_enabled:
                 await self._start_dispatcher()
         except Exception:
             self._running = False
+            if self.napcat_monitor is not None:
+                await self.napcat_monitor.stop()
+            for task in self._tasks:
+                task.cancel()
+            if self._tasks:
+                await asyncio.gather(*self._tasks, return_exceptions=True)
+                self._tasks.clear()
             await self._engine.dispose()
             self._engine = None
             self.sessions = None
+            self.dispatcher = None
             self.card_reply_factory = None
             self._local_poster_cache = None
+            self.napcat_monitor = None
             raise
         logger.info("anime_tracking plugin started")
 
@@ -99,6 +117,21 @@ class PluginLifecycle:
         task = asyncio.create_task(self.dispatcher.run())
         self.dispatcher.task = task
         self._tasks.append(task)
+
+    def _start_napcat_monitor(self) -> None:
+        if self.sessions is None:
+            return
+        base_url = os.environ.get("NAPCAT_ONEBOT_URL")
+        token = os.environ.get("ONEBOT_TOKEN")
+        if not base_url or not token:
+            logger.info("napcat_status.monitor_disabled")
+            return
+        self.napcat_monitor = NapCatStatusMonitor(
+            client=NapCatOneBotClient(base_url=base_url, token=token),
+            repository=RuntimeComponentStatusRepository(self.sessions),
+            interval_seconds=float(os.environ.get("NAPCAT_STATUS_POLL_SECONDS", "60")),
+        )
+        self._tasks.append(asyncio.create_task(self.napcat_monitor.run()))
 
     def _start_card_presentation(self) -> None:
         if not bool(self.config.get("card_presentation_enabled", True)):
@@ -142,6 +175,8 @@ class PluginLifecycle:
         if not self._running:
             return
         self._running = False
+        if self.napcat_monitor is not None:
+            await self.napcat_monitor.stop()
         for task in self._tasks:
             task.cancel()
         if self._tasks:
@@ -154,6 +189,7 @@ class PluginLifecycle:
             self._engine = None
         self.sessions = None
         self.dispatcher = None
+        self.napcat_monitor = None
         self.card_reply_factory = None
         self._local_poster_cache = None
         logger.info("anime_tracking plugin shut down")

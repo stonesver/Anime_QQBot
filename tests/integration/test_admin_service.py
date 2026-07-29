@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -10,6 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from anime_qqbot.application.admin_service import AdminService
 from anime_qqbot.groups.repository_v2 import ChatGroupRepository, GroupEvent
+from anime_qqbot.operations.napcat_status import NapCatProbeResult, NapCatStatusTracker
+from anime_qqbot.operations.runtime_status_repository import (
+    RuntimeComponentStatusRepository,
+)
 from anime_qqbot.persistence.models.catalog import Anime
 from anime_qqbot.persistence.models.operations import AdminAuditEvent
 from anime_qqbot.persistence.models.subscriptions_v2 import FollowSubscription
@@ -20,7 +24,8 @@ async def session_factory():
     engine = create_async_engine(os.environ["TEST_DATABASE_URL"])
     async with engine.begin() as conn:
         await conn.exec_driver_sql(
-            "TRUNCATE TABLE admin_audit_events, operator_jobs, delivery_controls, "
+            "TRUNCATE TABLE runtime_component_events, runtime_component_states, "
+            "admin_audit_events, operator_jobs, delivery_controls, "
             "interaction_sessions, group_runtime_settings, delivery_attempts, "
             "notification_jobs, subscription_resource_filters, follow_subscriptions, "
             "source_snapshots, anime_source_links, anime_titles, airing_occurrences, "
@@ -126,3 +131,43 @@ async def test_admin_can_cancel_one_subscription(session_factory) -> None:
     )
 
     assert deleted is True
+
+
+async def test_overview_exposes_safe_napcat_status_and_recent_history(
+    session_factory,
+) -> None:
+    started_at = datetime(2026, 7, 29, 12, 0, tzinfo=UTC)
+    tracker = NapCatStatusTracker()
+    repository = RuntimeComponentStatusRepository(session_factory)
+    await repository.record(
+        "napcat",
+        tracker.observe(NapCatProbeResult.online(), observed_at=started_at),
+    )
+    await repository.record(
+        "napcat",
+        tracker.observe(
+            NapCatProbeResult.qq_offline(),
+            observed_at=started_at + timedelta(minutes=1),
+        ),
+    )
+
+    overview = await AdminService(session_factory).overview()
+
+    assert overview["napcat_status"] == {
+        "status": "qq_offline",
+        "observed_at": "2026-07-29T12:01:00+00:00",
+        "status_changed_at": "2026-07-29T12:01:00+00:00",
+        "offline_since": "2026-07-29T12:01:00+00:00",
+        "recent_events": [
+            {
+                "previous_status": "online",
+                "status": "qq_offline",
+                "occurred_at": "2026-07-29T12:01:00+00:00",
+            },
+            {
+                "previous_status": None,
+                "status": "online",
+                "occurred_at": "2026-07-29T12:00:00+00:00",
+            },
+        ],
+    }

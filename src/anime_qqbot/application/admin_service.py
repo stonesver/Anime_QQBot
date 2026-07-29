@@ -18,6 +18,9 @@ from anime_qqbot.operations.repository import (
     AdminAuditRepository,
     OperatorJobRepository,
 )
+from anime_qqbot.operations.runtime_status_repository import (
+    RuntimeComponentStatusRepository,
+)
 from anime_qqbot.persistence.models.catalog import (
     Anime,
     AnimeSourceLink,
@@ -47,6 +50,7 @@ class AdminService:
         self._controls = DeliveryControlRepository(sessions)
         self._jobs = OperatorJobRepository(sessions)
         self._audit = AdminAuditRepository(sessions)
+        self._runtime_status = RuntimeComponentStatusRepository(sessions)
 
     async def overview(self) -> dict[str, object]:
         async with self._sessions() as session:
@@ -70,6 +74,8 @@ class AdminService:
                 ),
             )
         controls = await self._controls.list_controls()
+        napcat = await self._runtime_status.get("napcat")
+        napcat_events = await self._runtime_status.list_events("napcat")
         return {
             "groups": int(groups or 0),
             "subscriptions": int(subscriptions or 0),
@@ -77,6 +83,24 @@ class AdminService:
             "failed_notifications": int(failed or 0),
             "pending_mappings": int(mappings or 0),
             "delivery_paused": any(not row.allows_delivery for row in controls),
+            "napcat_status": {
+                "status": napcat.status.value if napcat is not None else "unknown",
+                "observed_at": _iso(napcat.observed_at if napcat is not None else None),
+                "status_changed_at": _iso(napcat.status_changed_at if napcat is not None else None),
+                "offline_since": _iso(napcat.offline_since if napcat is not None else None),
+                "recent_events": [
+                    {
+                        "previous_status": (
+                            event.previous_status.value
+                            if event.previous_status is not None
+                            else None
+                        ),
+                        "status": event.status.value,
+                        "occurred_at": event.occurred_at.isoformat(),
+                    }
+                    for event in napcat_events
+                ],
+            },
             "generated_at": datetime.now(UTC).isoformat(),
         }
 

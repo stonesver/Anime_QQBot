@@ -29,12 +29,19 @@ def test_napcat_uses_reverse_ws_with_token() -> None:
     entrypoint = Path("scripts/napcat-entrypoint.sh").read_text()
 
     assert "astrbot:6199/ws" in entrypoint
+    assert '"httpServers": [ {' in entrypoint
+    assert '"name": "astrbot-status"' in entrypoint
+    assert '"port": 3000' in entrypoint
+    assert '"enableCors": false' in entrypoint
     assert "ONEBOT_TOKEN" in compose
     assert "ONEBOT_TOKEN must be set" in compose
     assert "BANGUMI_USER_AGENT must be set" in compose
     assert '"token": "\'"${token}"\'"' in entrypoint
     assert "> /app/templates/astrbot.json" in entrypoint
     assert "export MODE=astrbot" in entrypoint
+    assert "NAPCAT_ONEBOT_URL: http://napcat:3000" in compose
+    assert "NAPCAT_STATUS_POLL_SECONDS: 60" in compose
+    assert "3000:3000" not in compose
 
 
 def test_no_qq_official_services() -> None:

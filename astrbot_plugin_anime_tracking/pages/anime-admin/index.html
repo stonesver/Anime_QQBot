@@ -44,6 +44,24 @@
             </div>
             <button class="button ghost" data-action="refresh">刷新</button>
           </div>
+          <article id="napcat-banner" class="session-banner unknown" aria-live="polite">
+            <div class="session-signal" aria-hidden="true"></div>
+            <div class="session-summary">
+              <p class="section-kicker">QQ SESSION</p>
+              <h3 id="napcat-status-label">尚未检测 QQ 会话</h3>
+              <p id="napcat-status-detail">等待 AstrBot 完成首次 NapCat 状态探测。</p>
+            </div>
+            <dl class="session-times">
+              <div><dt>最近检测</dt><dd id="napcat-observed-at">—</dd></div>
+              <div><dt>状态开始</dt><dd id="napcat-changed-at">—</dd></div>
+              <div><dt>离线开始</dt><dd id="napcat-offline-since">—</dd></div>
+            </dl>
+            <div id="napcat-recovery" class="session-recovery" hidden>
+              <strong>需要人工恢复</strong>
+              <p>在部署目录重启 NapCat 一次，再通过 SSH 隧道打开 WebUI 完成登录验证。</p>
+              <code>docker compose restart napcat</code>
+            </div>
+          </article>
           <div id="overview-grid" class="metric-grid" aria-live="polite"></div>
           <article class="panel control-panel">
             <div>
@@ -53,6 +71,15 @@
             <div class="action-row">
               <button class="button danger" data-action="pause-delivery">暂停主动发送</button>
               <button class="button" data-action="resume-delivery">恢复主动发送</button>
+            </div>
+          </article>
+          <article class="panel history-panel">
+            <div>
+              <p class="section-kicker">RECENT TRANSITIONS</p>
+              <h3>NapCat 最近状态变化</h3>
+            </div>
+            <div id="napcat-history" class="session-history">
+              <div class="empty">还没有状态变化记录。</div>
             </div>
           </article>
         </section>

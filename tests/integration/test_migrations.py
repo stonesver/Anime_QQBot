@@ -135,6 +135,8 @@ def test_empty_database_base_to_head() -> None:
     assert _run(_has_table("delivery_controls"))
     assert _run(_has_table("operator_jobs"))
     assert _run(_has_table("admin_audit_events"))
+    assert _run(_has_table("runtime_component_states"))
+    assert _run(_has_table("runtime_component_events"))
 
 
 def test_head_round_trip() -> None:
@@ -154,6 +156,8 @@ def test_head_round_trip() -> None:
     assert _run(_has_table("delivery_controls"))
     assert _run(_has_table("operator_jobs"))
     assert _run(_has_table("admin_audit_events"))
+    assert _run(_has_table("runtime_component_states"))
+    assert _run(_has_table("runtime_component_events"))
 
 
 def test_0004_snapshot_forward() -> None:

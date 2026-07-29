@@ -1,7 +1,7 @@
 # NapCat QQ 会话可观测性实施计划
 
 - 日期：2026-07-29
-- 状态：实施中
+- 状态：已实施，等待生产环境验收
 - 对应规格：[NapCat QQ 会话可观测性设计](../specs/2026-07-29-napcat-session-observability-design.md)
 
 ## 完成定义

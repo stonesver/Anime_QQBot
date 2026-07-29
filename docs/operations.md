@@ -111,6 +111,28 @@ Mikan 更新不会再投递，以免服务恢复后刷屏。
 不要把 6185 加入 Nginx 或云安全组。页面可查看群策略、订阅、映射、通知、来源和
 管理任务；写入只有在 `admin_page_writes_enabled=true` 时可用。
 
+总览顶部的 QQ Session 横幅每 30 秒刷新一次，AstrBot 后台每 60 秒通过 Compose
+内网调用 NapCat `get_status`：
+
+- 绿色表示 NapCat 可达且 QQ 在线；
+- 红色表示 NapCat 进程仍在，但 QQ 登录已经失效；
+- 黄色表示 OneBot 状态接口连续三次不可达；
+- 灰色表示尚未取得首次状态。
+
+NapCat 的 Docker healthy 只表示 WebUI/进程存活，不等于 QQ 在线。OneBot HTTP
+端口 `3000` 仅供 Compose 内网使用，不得加入宿主机 `ports`、Nginx 或云安全组。
+
+检测到红色状态时不会自动重启或登录。只执行一次人工恢复：
+
+```bash
+cd /opt/anime-qqbot
+docker compose restart napcat
+```
+
+随后通过 SSH 隧道打开 NapCat WebUI，完成扫码或设备验证。不要删除
+`napcat-qq`、`napcat-config` 卷，也不要连续重启和重复扫码。确认横幅恢复绿色且群内
+查询正常后，再解除主动发送暂停或熔断。
+
 账号下线或平台风控会写入持久化投递控制。重启容器不会自动解除熔断。确认 QQ
 登录和 OneBot 连接恢复后，在控制台“主动发送总闸”执行恢复。不要批量补发积压；
 状态为 unknown 的单条通知重试会要求再次确认，因为它可能已经实际发送。

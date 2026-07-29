@@ -15,7 +15,7 @@ esac
 
 umask 077
 printf '%s\n' \
-  '{ "network": { "httpServers": [], "httpSseServers": [], "httpClients": [], "websocketServers": [], "websocketClients": [ { "enable": true, "name": "astrbot", "url": "ws://astrbot:6199/ws", "reportSelfMessage": false, "messagePostFormat": "array", "token": "'"${token}"'", "debug": false, "heartInterval": 30000, "reconnectInterval": 30000 } ], "plugins": [] }, "musicSignUrl": "", "enableLocalFile2Url": false, "parseMultMsg": false }' \
+  '{ "network": { "httpServers": [ { "enable": true, "name": "astrbot-status", "host": "0.0.0.0", "port": 3000, "enableCors": false, "enableWebsocket": false, "messagePostFormat": "array", "token": "'"${token}"'", "debug": false } ], "httpSseServers": [], "httpClients": [], "websocketServers": [], "websocketClients": [ { "enable": true, "name": "astrbot", "url": "ws://astrbot:6199/ws", "reportSelfMessage": false, "messagePostFormat": "array", "token": "'"${token}"'", "debug": false, "heartInterval": 30000, "reconnectInterval": 30000 } ], "plugins": [] }, "musicSignUrl": "", "enableLocalFile2Url": false, "parseMultMsg": false }' \
   > /app/templates/astrbot.json
 
 unset ONEBOT_TOKEN
