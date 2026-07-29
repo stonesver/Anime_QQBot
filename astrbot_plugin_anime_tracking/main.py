@@ -69,7 +69,10 @@ from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
 
 from .anime_tracking_plugin.adapter import EventAdapter, Reply
 from .anime_tracking_plugin.admin_api import AdminWebAPI
-from .anime_tracking_plugin.event_envelope import from_astrbot_event
+from .anime_tracking_plugin.event_envelope import (
+    from_astrbot_event,
+    group_id_from_astrbot_event,
+)
 from .anime_tracking_plugin.interaction_gateway import InteractionGateway
 from .anime_tracking_plugin.lifecycle import PluginLifecycle
 from .anime_tracking_plugin.rendering import reply_to_event_result
@@ -240,7 +243,7 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
 
     @staticmethod
     def _group_id(event: Any) -> str:
-        return str(getattr(event, "group_id", "") or "")
+        return group_id_from_astrbot_event(event)
 
     @staticmethod
     def _sender_id(event: Any) -> str:

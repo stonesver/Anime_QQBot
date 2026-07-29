@@ -38,9 +38,7 @@ def from_astrbot_event(event: Any) -> EventEnvelope:
     role = "admin" if getattr(event, "role", "member") == "admin" else "member"
     return EventEnvelope(
         platform="qq",
-        group_id=_string(
-            getattr(event, "group_id", None) or getattr(message_obj, "group_id", None)
-        ),
+        group_id=group_id_from_astrbot_event(event),
         user_id=_sender_value(event, sender, "user_id", "get_sender_id"),
         display_name=_sender_value(event, sender, "nickname", "get_sender_name"),
         role=role,
@@ -53,6 +51,11 @@ def from_astrbot_event(event: Any) -> EventEnvelope:
         mentions_bot=_starts_with_self_at(chain, self_id),
         reply_to_message_id=_reply_id(chain),
     )
+
+
+def group_id_from_astrbot_event(event: Any) -> str:
+    message_obj = getattr(event, "message_obj", None)
+    return _string(getattr(event, "group_id", None) or getattr(message_obj, "group_id", None))
 
 
 def _starts_with_self_at(chain: list[Any], self_id: str) -> bool:
@@ -114,4 +117,4 @@ def _string(value: object) -> str:
     return "" if value is None else str(value)
 
 
-__all__ = ["EventEnvelope", "from_astrbot_event"]
+__all__ = ["EventEnvelope", "from_astrbot_event", "group_id_from_astrbot_event"]

@@ -37,6 +37,21 @@ async def test_help_command_returns_full_help() -> None:
     assert any("本周" in b.text for b in reply.blocks)
 
 
+async def test_empty_group_identity_is_rejected_before_dispatch() -> None:
+    adapter = EventAdapter(sessions=None)
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="",
+        user_id="456",
+        display_name="test",
+        unified_msg_origin="napcat:GroupMessage:1091724800",
+        content="/番剧 订阅 测试番剧",
+    )
+
+    assert reply.error == "无法识别当前群或用户，未执行操作"
+
+
 @pytest.mark.parametrize(
     "content",
     [

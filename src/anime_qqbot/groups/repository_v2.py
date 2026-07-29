@@ -53,6 +53,10 @@ class ChatGroupRepository:
         self._session_factory = session_factory
 
     async def upsert_group_event(self, event: GroupEvent) -> ChatGroupRow:
+        if not event.external_group_id.strip():
+            raise ValueError("external_group_id must not be empty")
+        if not event.external_user_id.strip():
+            raise ValueError("external_user_id must not be empty")
         async with self._session_factory() as session:
             group = await self._upsert_group(session, event)
             await self._upsert_membership(session, group, event)

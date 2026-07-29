@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .adapter import EventAdapter
+from .event_envelope import group_id_from_astrbot_event
 from .lifecycle import PluginLifecycle
 
 
@@ -42,7 +43,7 @@ class CommandHandlers:
         sender = getattr(event, "sender", None)
         user_id = str(getattr(sender, "user_id", "unknown"))
         nickname = getattr(sender, "nickname", "") or user_id
-        group_id = str(getattr(event, "group_id", ""))
+        group_id = group_id_from_astrbot_event(event)
 
         reply = await self._adapter.handle_message(
             platform="qq",

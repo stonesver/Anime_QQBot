@@ -256,15 +256,15 @@ class OutboxDispatcher:
             summary="delivered",
         )
 
-    def _render(self, job_type: str, payload: dict[str, Any]) -> list[Any]:
-        """Build the platform-neutral MessageChain for a job."""
+    def _render(self, job_type: str, payload: dict[str, Any]) -> Any:
+        """Build the AstrBot MessageChain for a job."""
         if job_type == "airing":
             return render_airing_notification(payload)
         if job_type == "release":
             return render_release_batch(payload)
-        return [f"[{job_type}] {payload}"]
+        return render_release_batch({"text": f"[{job_type}] {payload}"})
 
-    async def _send_message(self, umo: str, chain: list[Any]) -> None:
+    async def _send_message(self, umo: str, chain: Any) -> None:
         """Send via AstrBot's context.send_message when available.
 
         Falls back to ``context.send`` if the runtime SDK is older.

@@ -10,7 +10,11 @@ from .adapter import Reply
 
 try:
     import astrbot.api.message_components as components  # type: ignore[import-not-found]
+    from astrbot.api.event import (
+        MessageChain as AstrBotMessageChain,  # type: ignore[import-not-found]
+    )
 except ModuleNotFoundError:
+    AstrBotMessageChain = None  # type: ignore[assignment,misc]
     components = None  # type: ignore[assignment]
 
 
@@ -18,6 +22,11 @@ except ModuleNotFoundError:
 class RenderedReply:
     text: str | None = None
     chain: list[Any] | None = None
+
+
+@dataclass
+class OfflineMessageChain:
+    chain: list[Any]
 
 
 def render_reply(reply: Reply, *, asset_root: Path) -> RenderedReply:
@@ -70,26 +79,38 @@ def _plain_component(text: str) -> Any:
     return components.Plain(text)
 
 
-def render_airing_notification(payload: dict[str, Any]) -> list[Any]:
+def _at_component(user_id: object) -> Any:
+    if components is None:
+        return {"type": "at", "qq": str(user_id)}
+    return components.At(qq=str(user_id))
+
+
+def _message_chain(chain: list[Any]) -> Any:
+    if AstrBotMessageChain is None:
+        return OfflineMessageChain(chain)
+    return AstrBotMessageChain(chain=chain)
+
+
+def render_airing_notification(payload: dict[str, Any]) -> Any:
     user_ids = payload.get("at_user_ids") or []
     title = payload.get("display_title", "未知")
     episode = payload.get("episode_label", "?")
     summary = f"[预计放送] {title} 第{episode}集 即将播出"
     chain: list[Any] = []
     for user_id in user_ids:
-        chain.append({"type": "at", "qq": user_id})
-    chain.append({"type": "plain", "text": summary})
-    return chain
+        chain.append(_at_component(user_id))
+    chain.append(_plain_component(summary))
+    return _message_chain(chain)
 
 
-def render_release_batch(payload: dict[str, Any]) -> list[Any]:
+def render_release_batch(payload: dict[str, Any]) -> Any:
     text = payload.get("text", "")
     user_ids = payload.get("at_user_ids") or []
     chain: list[Any] = []
     for user_id in user_ids:
-        chain.append({"type": "at", "qq": user_id})
-    chain.append({"type": "plain", "text": text})
-    return chain
+        chain.append(_at_component(user_id))
+    chain.append(_plain_component(str(text)))
+    return _message_chain(chain)
 
 
 __all__ = [

@@ -19,6 +19,22 @@ def test_parses_standard_chinese_episode() -> None:
     assert result.parser_version == PARSER_VERSION
 
 
+def test_parses_dash_episode_without_confusing_resolution() -> None:
+    result = parse_release_title(
+        "[ANi] 感谢对战。～大小姐才不玩格斗游戏～ - 01 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]"
+    )
+
+    assert result.episode_label == "01"
+    assert result.resolutions == ("1080p",)
+
+
+def test_resolution_block_is_not_an_episode() -> None:
+    result = parse_release_title("[ANi] Example Anime [1080P][CHT]")
+
+    assert result.episode_label is None
+    assert "unknown_episode" in result.parse_warnings
+
+
 def test_unknown_episode_warns() -> None:
     result = parse_release_title("[SomeGroup] Music Collection [FLAC]")
 

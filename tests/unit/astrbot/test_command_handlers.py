@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,7 @@ from astrbot_plugin_anime_tracking.anime_tracking_plugin.commands import (
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.lifecycle import (
     PluginLifecycle,
 )
+from astrbot_plugin_anime_tracking.main import AnimeTrackingPlugin
 
 
 @dataclass
@@ -77,3 +79,9 @@ async def test_empty_message_returns_none() -> None:
     result = await handlers.on_fixed_command(event)
 
     assert result is None
+
+
+def test_group_id_falls_back_to_message_object() -> None:
+    event = SimpleNamespace(message_obj=SimpleNamespace(group_id=1091724800))
+
+    assert AnimeTrackingPlugin._group_id(event) == "1091724800"

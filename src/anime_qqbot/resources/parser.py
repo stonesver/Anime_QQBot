@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-PARSER_VERSION: str = "v1"
+PARSER_VERSION: str = "v2"
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,14 @@ class ParsedRelease:
 # Common subtitle group names and resolution patterns
 _GROUP_RE = re.compile(r"\[([^\]]+)\]")
 _RES_RE = re.compile(r"\b(\d{3,4}p)\b", re.IGNORECASE)
-_EP_RE = re.compile(r"(?:[第]?\s*(\d{1,3})\s*(?:話|话|集|ep)|\[(\d{1,3})[^\]]*\])", re.IGNORECASE)
+_EP_RE = re.compile(
+    r"(?:"
+    r"[第]?\s*(\d{1,3})\s*(?:話|话|集|ep)"
+    r"|\[(\d{1,3})(?:v\d+)?\]"
+    r"|\s-\s*(\d{1,3})(?:v\d+)?(?=\s*(?:\[|$))"
+    r")",
+    re.IGNORECASE,
+)
 _SPECIAL_RE = re.compile(r"\b(OVA|OAD|ONA|SP|剧场版|总集篇|分割(?:\d+))\b", re.IGNORECASE)
 _LANG_HINT = re.compile(r"\[?(简|繁|chs|cht|sc|tc)[^\]]*\]?", re.IGNORECASE)
 
