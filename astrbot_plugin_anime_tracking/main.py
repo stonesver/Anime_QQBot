@@ -1,4 +1,4 @@
-"""AstrBot plugin: anime_tracking (v0.3.0).
+"""AstrBot plugin: anime_tracking (v0.4.0).
 
 This plugin bridges NapCat (OneBot 11) group events to the Anime Core
 application layer. It follows the AstrBot Star plugin contract:
@@ -6,7 +6,7 @@ application layer. It follows the AstrBot Star plugin contract:
 * The plugin class extends ``Star`` and is instantiated by the runtime.
 * ``/番剧 <子命令>`` commands are registered via ``@filter.command_group``
   or ``@filter.command`` decorators.
-* Replies are sent via ``yield event.plain_result(...)``.
+* Replies are sent through one local Plain / Image message-chain boundary.
 * Cleanup goes through ``terminate()`` which stops the outbox dispatcher
   and disposes the database engine.
 
@@ -17,6 +17,8 @@ by AstrBot's Docker image).
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 # Guard AstrBot SDK imports for offline compilation.
@@ -65,11 +67,12 @@ except ModuleNotFoundError:
 
 from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
 
-from .anime_tracking_plugin.adapter import EventAdapter
+from .anime_tracking_plugin.adapter import EventAdapter, Reply
 from .anime_tracking_plugin.admin_api import AdminWebAPI
 from .anime_tracking_plugin.event_envelope import from_astrbot_event
 from .anime_tracking_plugin.interaction_gateway import InteractionGateway
 from .anime_tracking_plugin.lifecycle import PluginLifecycle
+from .anime_tracking_plugin.rendering import reply_to_event_result
 
 
 class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
@@ -125,60 +128,62 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
             stopper = getattr(event, "stop_event", None)
             if callable(stopper):
                 stopper()
-        if result.text:
-            yield event.plain_result(result.text)
+        if result.reply is not None:
+            yield self._reply_result(event, result.reply)
+        elif result.text:
+            yield self._reply_result(event, Reply.from_text(result.text))
 
     @_group_route.command("帮助")  # type: ignore[union-attr]
     async def _handle_help(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("今天")  # type: ignore[union-attr]
     async def _handle_today(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("本周")  # type: ignore[union-attr]
     async def _handle_week(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("季度")  # type: ignore[union-attr]
     async def _handle_season(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("搜索")  # type: ignore[union-attr]
     async def _handle_search(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("详情")  # type: ignore[union-attr]
     async def _handle_detail(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("下次")  # type: ignore[union-attr]
     async def _handle_next(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("订阅")  # type: ignore[union-attr]
     async def _handle_subscribe(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("取消订阅")  # type: ignore[union-attr]
     async def _handle_unsubscribe(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("我的订阅")  # type: ignore[union-attr]
     async def _handle_my(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("订阅设置")  # type: ignore[union-attr]
     async def _handle_settings(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("状态")  # type: ignore[union-attr]
     async def _handle_status(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     @_group_route.command("映射待处理")  # type: ignore[union-attr]
     async def _handle_mapping(self, event: AstrMessageEvent) -> MessageEventResult:
-        yield event.plain_result(await self._dispatch(event))
+        yield await self._dispatch_result(event)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -194,9 +199,15 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
     # ------------------------------------------------------------------
 
     def _build_adapter(self, lifecycle: PluginLifecycle) -> EventAdapter:
-        return EventAdapter(sessions=lifecycle.sessions)
+        return EventAdapter(
+            sessions=lifecycle.sessions,
+            card_reply_builder=lifecycle.card_reply_factory,
+        )
 
-    async def _dispatch(self, event: AstrMessageEvent) -> str:
+    async def _dispatch_result(self, event: AstrMessageEvent) -> Any:
+        return self._reply_result(event, await self._dispatch(event))
+
+    async def _dispatch(self, event: AstrMessageEvent) -> Reply:
         lifecycle = await self._ensure_lifecycle()
         if bool(self._config.get("send_governor_enabled", False)):
             permit = lifecycle.governor.acquire(
@@ -207,7 +218,9 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
                 )
             )
             if not permit.allowed:
-                return f"请求有点快，请 {max(1, round(permit.retry_after_seconds))} 秒后再试。"
+                return Reply.from_text(
+                    f"请求有点快，请 {max(1, round(permit.retry_after_seconds))} 秒后再试。"
+                )
         adapter = self._build_adapter(lifecycle)
         reply = await adapter.handle_message(
             platform="qq",
@@ -218,14 +231,12 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
             content=event.message_str,
             is_admin=getattr(event, "role", "member") == "admin",
         )
-        if reply.blocks:
-            return reply.blocks[0].text
-        if reply.candidates:
-            rows = [f"{index}. {title}" for index, title in enumerate(reply.candidates, 1)]
-            return "找到多个结果，请回复“看 编号 / 追番 编号”：\n" + "\n".join(rows)
-        if reply.error:
-            return f"错误: {reply.error}"
-        return "（无内容）"
+        return reply
+
+    @staticmethod
+    def _reply_result(event: Any, reply: Reply) -> Any:
+        asset_root = Path(os.environ.get("CARD_ASSET_ROOT", "/var/lib/anime-qqbot/cards"))
+        return reply_to_event_result(event, reply, asset_root=asset_root)
 
     @staticmethod
     def _group_id(event: Any) -> str:

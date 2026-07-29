@@ -1,7 +1,7 @@
 # Anime QQBot 群聊回复与番剧卡片实施计划
 
 - 日期：2026-07-29
-- 状态：待实施
+- 状态：已实施（自动化 passed，真实服务器与 QQ 群 external_gate）
 - 对应规格：[群聊回复与番剧卡片设计](../specs/2026-07-29-anime-group-reply-presentation-design.md)
 - 目标版本：v0.4.0
 - 设计基线提交：`77054a1`

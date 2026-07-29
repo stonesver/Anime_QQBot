@@ -71,6 +71,9 @@ class AnimeDetail:
     score: float | None = None
     total_episodes: int | None = None
     nsfw: bool = False
+    release_year: int | None = None
+    season_name: str | None = None
+    media_format: str | None = None
 
     @property
     def title(self) -> str:

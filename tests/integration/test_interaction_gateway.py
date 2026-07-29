@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
+from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from anime_tracking_plugin.adapter import Reply
 from anime_tracking_plugin.event_envelope import EventEnvelope
 from anime_tracking_plugin.interaction_gateway import InteractionGateway
 from anime_tracking_plugin.lifecycle import PluginLifecycle
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from anime_qqbot.persistence.models.catalog import Anime
 
 
 @pytest.fixture
@@ -80,3 +86,33 @@ async def test_only_astrbot_admin_can_change_group_policy(lifecycle) -> None:
     assert changed.text == "本群设置已更新。"
     direct = await gateway.route(_envelope("今日番剧"))
     assert direct.matched is True
+
+
+async def test_mention_unique_search_preserves_image_reply(lifecycle) -> None:
+    anime_id = uuid4()
+    now = datetime.now(UTC)
+    assert lifecycle.sessions is not None
+    async with lifecycle.sessions() as session, session.begin():
+        session.add(
+            Anime(
+                id=anime_id,
+                display_title="夏日物语",
+                nsfw_flag="unknown",
+                disabled=False,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    class Builder:
+        async def build(self, **_kwargs):
+            return Reply.from_image(Path("/var/lib/anime-qqbot/cards/renders/card.png"))
+
+    lifecycle.card_reply_factory = Builder()
+    result = await InteractionGateway(lifecycle).route(
+        _envelope("搜番 夏日物语", mentions_bot=True)
+    )
+
+    assert result.matched is True
+    assert result.reply is not None
+    assert result.reply.kind == "image"

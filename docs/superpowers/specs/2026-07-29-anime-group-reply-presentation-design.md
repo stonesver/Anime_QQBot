@@ -3,7 +3,7 @@
 ## 状态
 
 - 日期：2026-07-29
-- 状态：已确认，实施计划已编写
+- 状态：已实施（自动化 passed，真实服务器与 QQ 群 external_gate）
 - 实施计划：[群聊回复与番剧卡片实施计划](../plans/2026-07-29-anime-group-reply-presentation-implementation-plan.md)
 - 接入边界：AstrBot + NapCat + 普通 QQ 小号
 - 部署边界：2 核 2 GiB 服务器，保留现有静态站与 NapCat 发布隔离

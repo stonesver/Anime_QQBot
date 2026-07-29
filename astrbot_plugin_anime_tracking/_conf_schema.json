@@ -9,6 +9,11 @@
     "default": 3.0,
     "description": "通知 Outbox 的轮询间隔（秒）。"
   },
+  "card_presentation_enabled": {
+    "type": "bool",
+    "default": true,
+    "description": "在真实本地海报可用时，为唯一搜索结果、详情和下一集发送番剧卡片。"
+  },
   "interaction_gateway_enabled": {
     "type": "bool",
     "default": false,

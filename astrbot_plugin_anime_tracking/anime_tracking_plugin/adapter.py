@@ -23,7 +23,8 @@ from __future__ import annotations
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, Protocol
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -52,6 +53,8 @@ from anime_qqbot.application import (
 )
 from anime_qqbot.interactions.models import CandidateItem, InteractionScope
 from anime_qqbot.interactions.repository import InteractionSessionRepository
+from anime_qqbot.presentation.models import CardScene
+from anime_qqbot.presentation.text import format_listing
 
 # ---------------------------------------------------------------------------
 # Platform-neutral reply types
@@ -63,6 +66,7 @@ class ReplyBlock:
     """One text or image segment of a reply."""
 
     text: str = ""
+    image_path: Path | None = None
 
 
 @dataclass
@@ -96,6 +100,25 @@ class Reply:
     @classmethod
     def from_error(cls, message: str) -> Reply:
         return cls(kind="error", error=message)
+
+    @classmethod
+    def from_image(cls, image_path: Path, *, hint: str | None = None) -> Reply:
+        blocks = [ReplyBlock(image_path=image_path)]
+        if hint:
+            blocks.append(ReplyBlock(text=hint))
+        return cls(kind="image", blocks=blocks)
+
+
+class CardReplyBuilder(Protocol):
+    async def build(
+        self,
+        *,
+        scene: CardScene,
+        anime_id: UUID,
+        ctx: ChatContext,
+        fallback: Reply,
+        now: datetime,
+    ) -> Reply: ...
 
 
 def help_reply() -> Reply:
@@ -154,22 +177,29 @@ async def _query_to_reply(result: QueryResult, *, ctx: ChatContext) -> Reply:
     if result.kind == IntentKind.TODAY:
         if not result.rows:
             return Reply.from_text("今天没有即将放送的番剧")
-        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
         return Reply.from_text(
-            f"📺 今日放送 · {len(result.rows)} 部\n{body}\n\n可发送“搜番 名称”查看详情。"
+            format_listing(
+                result.rows,
+                title="📺 今日放送",
+                timezone=ctx.timezone,
+                footer="发送「搜番 名称」查看详情",
+            )
         )
     if result.kind == IntentKind.WEEK:
         if not result.rows:
             return Reply.from_text("本周没有即将放送的番剧")
-        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
         return Reply.from_text(
-            f"🗓 本周放送 · {len(result.rows)} 部\n{body}\n\n可发送“追番 名称”订阅提醒。"
+            format_listing(
+                result.rows,
+                title="🗓 本周放送",
+                timezone=ctx.timezone,
+                footer="追番时发送「追番 名称」",
+            )
         )
     if result.kind == IntentKind.SEASON:
         if not result.rows:
             return Reply.from_text("该季度没有已收录的番剧")
-        body = "\n".join(_format_anime_row(r, ctx.timezone) for r in result.rows)
-        return Reply.from_text(f"季度番剧 · {len(result.rows)} 部\n{body}")
+        return Reply.from_text(format_listing(result.rows, title="季度番剧", timezone=ctx.timezone))
     if result.kind == IntentKind.SEARCH:
         if result.detail is not None:
             title = result.detail.display_title or "该番剧"
@@ -235,9 +265,30 @@ class EventAdapter:
         *,
         sessions: async_sessionmaker[AsyncSession] | None,
         handlers: dict[IntentKind, UseCaseHandler] | None = None,
+        card_reply_builder: CardReplyBuilder | None = None,
     ) -> None:
         self._sessions = sessions
+        self._card_reply_builder = card_reply_builder
         self._handlers = handlers or self._default_handlers()
+
+    async def _present_query(self, result: QueryResult, *, ctx: ChatContext) -> Reply:
+        fallback = await _query_to_reply(result, ctx=ctx)
+        if self._card_reply_builder is None or result.detail is None:
+            return fallback
+        scene = {
+            IntentKind.SEARCH: CardScene.UNIQUE_SEARCH,
+            IntentKind.DETAIL: CardScene.DETAIL,
+            IntentKind.NEXT: CardScene.NEXT,
+        }.get(result.kind)
+        if scene is None:
+            return fallback
+        return await self._card_reply_builder.build(
+            scene=scene,
+            anime_id=result.detail.id,
+            ctx=ctx,
+            fallback=fallback,
+            now=_now(),
+        )
 
     async def handle_message(
         self,
@@ -391,23 +442,26 @@ class EventAdapter:
                     datetime.min.time(),
                     tzinfo=ctx.timezone,
                 ).astimezone(UTC)
-            return await _query_to_reply(await today_listing(s, now=instant), ctx=ctx)
+            return await self._present_query(await today_listing(s, now=instant), ctx=ctx)
 
         async def _week(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(await week_listing(s, now=_now()), ctx=ctx)
+            return await self._present_query(await week_listing(s, now=_now()), ctx=ctx)
 
         async def _search(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(await search_anime(s, query=intent.query or ""), ctx=ctx)
+            return await self._present_query(
+                await search_anime(s, query=intent.query or ""),
+                ctx=ctx,
+            )
 
         async def _season(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
             now = _now()
-            return await _query_to_reply(
+            return await self._present_query(
                 await season_listing(
                     s,
                     year=intent.season_year or now.year,
@@ -419,7 +473,7 @@ class EventAdapter:
         async def _detail(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(
+            return await self._present_query(
                 await detail_for(s, anime_id=intent.anime_id, query=intent.query),
                 ctx=ctx,
             )
@@ -427,7 +481,7 @@ class EventAdapter:
         async def _next(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(
+            return await self._present_query(
                 await next_airing_for(s, anime_id=intent.anime_id, query=intent.query, now=_now()),
                 ctx=ctx,
             )
@@ -435,7 +489,7 @@ class EventAdapter:
         async def _my(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(await my_subscriptions(s, ctx=ctx), ctx=ctx)
+            return await self._present_query(await my_subscriptions(s, ctx=ctx), ctx=ctx)
 
         async def _subscribe(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
@@ -455,12 +509,12 @@ class EventAdapter:
         async def _status(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(await source_freshness(s), ctx=ctx)
+            return await self._present_query(await source_freshness(s), ctx=ctx)
 
         async def _mapping(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await _query_to_reply(await pending_mappings(s), ctx=ctx)
+            return await self._present_query(await pending_mappings(s), ctx=ctx)
 
         return {
             IntentKind.TODAY: _today,
@@ -483,6 +537,7 @@ def _now() -> datetime:
 
 
 __all__ = [
+    "CardReplyBuilder",
     "EventAdapter",
     "Reply",
     "ReplyBlock",

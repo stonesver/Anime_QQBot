@@ -84,3 +84,15 @@ def test_third_party_images_and_persistent_paths_are_pinned() -> None:
     assert "/app/napcat/config" in compose
     assert ":6185" in compose
     assert ":6099" in compose
+
+
+def test_card_assets_are_shared_only_by_worker_and_astrbot() -> None:
+    compose = Path("compose.yaml").read_text()
+
+    assert "card-assets:" in compose
+    assert compose.count("card-assets:/var/lib/anime-qqbot/cards") == 2
+    assert "CARD_ASSET_ROOT: /var/lib/anime-qqbot/cards" in compose
+    assert "CARD_CACHE_MAX_BYTES" in compose
+    assert "CARD_CACHE_TARGET_BYTES" in compose
+    assert "ANIME_CARD_CJK_FONT" in compose
+    assert "ANIME_CARD_MONO_FONT" in compose

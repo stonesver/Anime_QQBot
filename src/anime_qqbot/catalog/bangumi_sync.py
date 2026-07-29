@@ -68,6 +68,9 @@ class BangumiCatalogSync:
         )
 
         version = await self._next_version(entry.id)
+        season_name = None
+        if detail.air_date is not None:
+            season_name = ("冬", "春", "夏", "秋")[(detail.air_date.month - 1) // 3]
         await self._write_repo.append_snapshot(
             entry_id=entry.id,
             version=version,
@@ -80,6 +83,10 @@ class BangumiCatalogSync:
                 "total_episodes": detail.total_episodes,
                 "air_date": detail.air_date.isoformat() if detail.air_date else None,
                 "nsfw": detail.nsfw,
+                "release_year": detail.release_year
+                or (detail.air_date.year if detail.air_date else None),
+                "season_name": detail.season_name or season_name,
+                "media_format": detail.media_format,
             },
             source_time=now,
             fetched_at=now,

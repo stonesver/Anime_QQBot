@@ -211,6 +211,15 @@ class AniListClient:
         score = media.get("averageScore")
         total_eps = media.get("episodes")
         is_adult = bool(media.get("isAdult", False))
+        season = cls._optional_string(media.get("season"))
+        season_names = {
+            "WINTER": "冬",
+            "SPRING": "春",
+            "SUMMER": "夏",
+            "FALL": "秋",
+        }
+        release_year = media.get("seasonYear")
+        media_format = cls._optional_string(media.get("format"))
         return AnimeDetail(
             subject_id=anilist_id,
             title_cn=cls._optional_string(titles.get("native")),
@@ -221,6 +230,9 @@ class AniListClient:
             score=float(score) if isinstance(score, (int, float)) else None,
             total_episodes=int(total_eps) if isinstance(total_eps, int) else None,
             nsfw=is_adult,
+            release_year=int(release_year) if isinstance(release_year, int) else None,
+            season_name=season_names.get(season or ""),
+            media_format=media_format,
         )
 
     @classmethod

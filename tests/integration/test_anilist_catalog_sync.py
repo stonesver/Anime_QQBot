@@ -82,6 +82,9 @@ def _detail(anilist_id: int) -> AnimeDetail:
         score=8.0,
         total_episodes=12,
         nsfw=False,
+        release_year=2026,
+        season_name="夏",
+        media_format="TV",
     )
 
 
@@ -99,6 +102,9 @@ async def test_sync_subject_creates_external_entry_and_snapshot(session_factory)
     snap = await write.current_snapshot(delta.added[0].id)
     assert snap is not None
     assert snap.payload["title_romaji"] == "タイトル 21"
+    assert snap.payload["release_year"] == 2026
+    assert snap.payload["season_name"] == "夏"
+    assert snap.payload["media_format"] == "TV"
 
 
 @pytest.mark.asyncio

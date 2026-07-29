@@ -57,6 +57,7 @@ class CatalogEnrichmentRunner:
         candidates = await self.bangumi.search(query.strip())
         synced = 0
         anilist_links = 0
+        anime_ids: list[str] = []
         seen: set[int] = set()
         for candidate in candidates:
             if candidate.nsfw or candidate.subject_id in seen:
@@ -64,6 +65,7 @@ class CatalogEnrichmentRunner:
             seen.add(candidate.subject_id)
             result = await self.bangumi_sync.sync_subject(candidate.subject_id)
             synced += 1
+            anime_ids.append(str(result.source_link.anime_id))
             if await self.anilist.enrich_anime(result.source_link.anime_id):
                 anilist_links += 1
             if synced >= 5:
@@ -72,6 +74,7 @@ class CatalogEnrichmentRunner:
             "trigger": "search_miss",
             "bangumi_synced": synced,
             "anilist_links": anilist_links,
+            "anime_ids": anime_ids,
         }
 
     async def _subscription(self, parameters: dict[str, object]) -> dict[str, object]:
@@ -89,6 +92,7 @@ class CatalogEnrichmentRunner:
                 "bangumi_synced": 0,
                 "anilist_links": 0,
                 "mikan_links": 0,
+                "anime_ids": [],
             }
         errors: list[str] = []
         bangumi_synced = 0
@@ -114,6 +118,7 @@ class CatalogEnrichmentRunner:
             "bangumi_synced": bangumi_synced,
             "anilist_links": int(anilist_linked),
             "mikan_links": mikan_links,
+            "anime_ids": [str(anime_id)],
         }
 
     async def _confirmed_bangumi_id(self, anime_id: UUID) -> int | None:

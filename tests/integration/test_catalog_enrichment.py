@@ -100,6 +100,7 @@ async def test_search_request_populates_local_catalogue(sessions) -> None:
         "trigger": "search_miss",
         "bangumi_synced": 1,
         "anilist_links": 0,
+        "anime_ids": [str(rows[0].id)],
     }
     assert len(rows) == 1
     assert rows[0].display_title == "夏日物语"
@@ -148,6 +149,7 @@ async def test_subscription_request_enriches_exact_anime_immediately(sessions) -
         "bangumi_synced": 1,
         "anilist_links": 1,
         "mikan_links": 1,
+        "anime_ids": [str(seeded.source_link.anime_id)],
     }
     assert anilist.calls == [seeded.source_link.anime_id]
     assert mikan_calls == [(seeded.source_link.anime_id, now)]

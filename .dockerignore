@@ -9,6 +9,9 @@
 __pycache__
 *.pyc
 backups
+card-assets
+card-benchmark*.json
+card-smoke*.png
 compose.test.yaml
 docs/superpowers
 tests

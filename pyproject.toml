@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "anime-qqbot"
-version = "0.3.0"
+version = "0.4.0"
 description = "AstrBot-powered multi-source QQ anime tracking bot (Bangumi + AniList + Mikan)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -15,6 +15,7 @@ dependencies = [
   "defusedxml>=0.7.1,<1",
   "fastapi>=0.115,<1",
   "httpx>=0.28,<1",
+  "pillow>=11,<13",
   "pydantic-settings>=2.7,<3",
   "sqlalchemy[asyncio]>=2.0,<3",
   "tzdata>=2025.1",
@@ -29,6 +30,7 @@ dev = [
   "respx>=0.22,<1",
   "ruff>=0.9,<1",
   "types-defusedxml>=0.7.0.20250822",
+  "types-pillow>=10.2.0.20240822",
 ]
 
 [tool.hatch.build.targets.wheel]

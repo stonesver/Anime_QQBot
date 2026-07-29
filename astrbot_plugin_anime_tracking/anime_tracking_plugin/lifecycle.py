@@ -17,12 +17,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from pathlib import Path
 from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from anime_qqbot.notifications.governor import GovernorLimits, SendGovernor
 from anime_qqbot.persistence.session import create_engine, create_session_factory
+from anime_qqbot.presentation.assembler import CardDataAssembler
+from anime_qqbot.presentation.poster_cache import PosterCache
+from anime_qqbot.presentation.renderer import AnimeCardRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,8 @@ class PluginLifecycle:
         self._engine: AsyncEngine | None = None
         self.sessions: async_sessionmaker[AsyncSession] | None = None
         self.dispatcher: Any | None = None
+        self.card_reply_factory: Any | None = None
+        self._local_poster_cache: PosterCache | None = None
         self.governor = SendGovernor(limits=self._governor_limits())
 
     @classmethod
@@ -71,6 +77,7 @@ class PluginLifecycle:
         self.sessions = create_session_factory(self._engine)
         self._running = True
         try:
+            self._start_card_presentation()
             if self._start_dispatcher_enabled:
                 await self._start_dispatcher()
         except Exception:
@@ -78,6 +85,8 @@ class PluginLifecycle:
             await self._engine.dispose()
             self._engine = None
             self.sessions = None
+            self.card_reply_factory = None
+            self._local_poster_cache = None
             raise
         logger.info("anime_tracking plugin started")
 
@@ -90,6 +99,44 @@ class PluginLifecycle:
         task = asyncio.create_task(self.dispatcher.run())
         self.dispatcher.task = task
         self._tasks.append(task)
+
+    def _start_card_presentation(self) -> None:
+        if not bool(self.config.get("card_presentation_enabled", True)):
+            return
+        if self.sessions is None:
+            return
+        cjk_font = Path(
+            os.environ.get(
+                "ANIME_CARD_CJK_FONT",
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            )
+        )
+        mono_font = Path(
+            os.environ.get(
+                "ANIME_CARD_MONO_FONT",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            )
+        )
+        if not cjk_font.is_file() or not mono_font.is_file():
+            logger.warning(
+                "anime_tracking.card_fonts_unavailable",
+                extra={"card_presentation_enabled": False},
+            )
+            return
+        asset_root = Path(os.environ.get("CARD_ASSET_ROOT", "/var/lib/anime-qqbot/cards"))
+        self._local_poster_cache = PosterCache(asset_root)
+        renderer = AnimeCardRenderer(
+            asset_root / "renders",
+            cjk_font_path=cjk_font,
+            mono_font_path=mono_font,
+        )
+        from .card_reply_factory import CardReplyFactory
+
+        self.card_reply_factory = CardReplyFactory(
+            assembler=CardDataAssembler(self.sessions),
+            poster_locator=self._local_poster_cache.find_local_poster,
+            renderer=renderer,
+        )
 
     async def shutdown(self) -> None:
         if not self._running:
@@ -107,6 +154,8 @@ class PluginLifecycle:
             self._engine = None
         self.sessions = None
         self.dispatcher = None
+        self.card_reply_factory = None
+        self._local_poster_cache = None
         logger.info("anime_tracking plugin shut down")
 
     @property

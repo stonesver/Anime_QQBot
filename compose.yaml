@@ -23,6 +23,9 @@ x-app: &app
     WORKER_SCAN_SECONDS: ${WORKER_SCAN_SECONDS:-30}
     MIKAN_POLL_SECONDS: ${MIKAN_POLL_SECONDS:-300}
     MIKAN_BATCH_SECONDS: ${MIKAN_BATCH_SECONDS:-600}
+    CARD_ASSET_ROOT: /var/lib/anime-qqbot/cards
+    CARD_CACHE_MAX_BYTES: ${CARD_CACHE_MAX_BYTES:-314572800}
+    CARD_CACHE_TARGET_BYTES: ${CARD_CACHE_TARGET_BYTES:-283115520}
   init: true
   restart: unless-stopped
   stop_grace_period: 20s
@@ -64,6 +67,8 @@ services:
   worker:
     <<: *app
     command: ["worker"]
+    volumes:
+      - card-assets:/var/lib/anime-qqbot/cards
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -83,9 +88,13 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://anime:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@postgres:5432/anime
       ONEBOT_TOKEN: ${ONEBOT_TOKEN:?ONEBOT_TOKEN must be set}
+      CARD_ASSET_ROOT: /var/lib/anime-qqbot/cards
+      ANIME_CARD_CJK_FONT: /usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+      ANIME_CARD_MONO_FONT: /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - astrbot-data:/AstrBot/data
+      - card-assets:/var/lib/anime-qqbot/cards
     ports:
       - "127.0.0.1:${ASTRBOT_WEBUI_PORT:-6185}:6185"
     expose:
@@ -130,3 +139,4 @@ volumes:
   astrbot-data:
   napcat-qq:
   napcat-config:
+  card-assets:

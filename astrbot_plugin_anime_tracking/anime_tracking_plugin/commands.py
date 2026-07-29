@@ -7,6 +7,8 @@ is guarded so the module compiles without the AstrBot runtime.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any
 
 from .adapter import EventAdapter
@@ -23,7 +25,10 @@ class CommandHandlers:
 
     def __init__(self, lifecycle: PluginLifecycle) -> None:
         self._lifecycle = lifecycle
-        self._adapter = EventAdapter(sessions=getattr(lifecycle, "sessions", None))
+        self._adapter = EventAdapter(
+            sessions=getattr(lifecycle, "sessions", None),
+            card_reply_builder=getattr(lifecycle, "card_reply_factory", None),
+        )
 
     # In production, AstrBot's decorator maps group-level commands to these
     # methods. Tests call them directly with fake events.
@@ -51,7 +56,11 @@ class CommandHandlers:
         # Rendering to AstrBot chain happens in rendering.py.
         from .rendering import render_reply
 
-        return await render_reply(reply, event)
+        rendered = render_reply(
+            reply,
+            asset_root=Path(os.environ.get("CARD_ASSET_ROOT", "/var/lib/anime-qqbot/cards")),
+        )
+        return rendered.chain if rendered.chain is not None else rendered.text
 
 
 __all__ = ["CommandHandlers"]

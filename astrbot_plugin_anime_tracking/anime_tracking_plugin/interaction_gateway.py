@@ -27,10 +27,9 @@ from anime_qqbot.notifications.governor import (
 )
 from anime_qqbot.operations.repository import AdminAuditRepository
 
-from .adapter import EventAdapter
+from .adapter import EventAdapter, Reply
 from .event_envelope import EventEnvelope
 from .lifecycle import PluginLifecycle
-from .rendering import render_reply
 
 
 @dataclass(frozen=True)
@@ -38,6 +37,7 @@ class GatewayResult:
     matched: bool
     text: str | None = None
     stop_propagation: bool = False
+    reply: Reply | None = None
 
     @classmethod
     def ignored(cls) -> GatewayResult:
@@ -108,13 +108,17 @@ class InteractionGateway:
             timezone=ZoneInfo(policy.timezone),
             is_admin=envelope.is_owner,
         )
-        adapter = EventAdapter(sessions=sessions)
+        adapter = EventAdapter(
+            sessions=sessions,
+            card_reply_builder=self._lifecycle.card_reply_factory,
+        )
         reply = await adapter.handle_intent(ctx=ctx, intent=intent, now=now)
         if reply.candidate_items:
             await adapter.persist_candidates(ctx=ctx, reply=reply, now=now)
         return GatewayResult(
             matched=True,
-            text=await render_reply(reply, envelope),
+            text=reply.blocks[0].text if reply.blocks and reply.blocks[0].text else None,
+            reply=reply,
             stop_propagation=True,
         )
 

@@ -156,6 +156,8 @@ async def test_snapshot_payload_includes_normalized_fields(session_factory) -> N
     assert payload["title_jp"] == "夏物語"
     assert payload["score"] == 8.2
     assert payload["air_date"] == "2026-07-01"
+    assert payload["release_year"] == 2026
+    assert payload["season_name"] == "夏"
 
 
 async def test_snapshot_versions_increment(session_factory) -> None:

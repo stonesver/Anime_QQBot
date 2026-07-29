@@ -25,6 +25,7 @@ import os
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from uuid import UUID
 
 import uvicorn
@@ -61,6 +62,8 @@ from anime_qqbot.persistence.models.catalog import (
 from anime_qqbot.persistence.models.runtime import ProcessedPlatformEvent, WorkerHeartbeat
 from anime_qqbot.persistence.models.subscriptions_v2 import FollowSubscription
 from anime_qqbot.persistence.session import create_engine, create_session_factory
+from anime_qqbot.presentation.poster_cache import PosterCache
+from anime_qqbot.presentation.poster_warmup import PosterWarmupService
 from anime_qqbot.resources.adapters.mikan import MikanClient
 from anime_qqbot.resources.module import MikanReleasePipeline, PollSummary
 from anime_qqbot.settings import Settings
@@ -78,6 +81,21 @@ def _catalog_sync_is_due(now: datetime, next_sync_at: datetime | None) -> bool:
     return next_sync_at is None or now >= next_sync_at
 
 
+def _result_anime_ids(result: dict[str, object]) -> set[UUID]:
+    values = result.get("anime_ids")
+    if not isinstance(values, list):
+        return set()
+    parsed: set[UUID] = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed.add(UUID(value))
+        except ValueError:
+            continue
+    return parsed
+
+
 @dataclass(frozen=True)
 class WorkerComponents:
     clock: SystemClock
@@ -91,6 +109,8 @@ class WorkerComponents:
     anilist_discovery: AniListLinkDiscoveryService
     planner: AiringPlanner
     mikan_pipeline: MikanReleasePipeline
+    poster_cache: PosterCache
+    poster_warmup: PosterWarmupService
 
 
 async def _build_components(settings: Settings) -> WorkerComponents:
@@ -147,6 +167,14 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         poll_interval=timedelta(seconds=settings.mikan_poll_seconds),
         batch_window=timedelta(seconds=settings.mikan_batch_seconds),
     )
+    poster_cache = PosterCache(
+        Path(settings.card_asset_root),
+        max_download_bytes=settings.poster_download_max_bytes,
+        max_decode_pixels=settings.poster_decode_max_pixels,
+        connect_timeout_seconds=settings.poster_connect_timeout_seconds,
+        total_timeout_seconds=settings.poster_total_timeout_seconds,
+    )
+    poster_warmup = PosterWarmupService(sessions, poster_cache)
     return WorkerComponents(
         clock=clock,
         sessions=sessions,
@@ -159,6 +187,8 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         anilist_discovery=anilist_discovery,
         planner=planner,
         mikan_pipeline=mikan_pipeline,
+        poster_cache=poster_cache,
+        poster_warmup=poster_warmup,
     )
 
 
@@ -698,7 +728,16 @@ async def run_worker() -> None:
         parameters: dict[str, object],
     ) -> dict[str, object]:
         if parameters.get("trigger") in {"search_miss", "subscription"}:
-            return await enrichment.run(parameters)
+            result = await enrichment.run(parameters)
+            warmup = await components.poster_warmup.run_once(
+                limit=5,
+                anime_ids=_result_anime_ids(result),
+            )
+            return {
+                **result,
+                "posters_stored": warmup.stored,
+                "posters_failed": warmup.failed,
+            }
         discovered = await _discover_calendar_subjects(components, limit=100)
         await _ingest_known_subjects(components, limit=100)
         anilist = await components.anilist_discovery.run_once(limit=20)
@@ -708,10 +747,14 @@ async def run_worker() -> None:
             now=components.clock.now(),
             limit=100,
         )
+        await _project_fresh_snapshots(components)
+        warmup = await components.poster_warmup.run_once(limit=20)
         return {
             "discovered": discovered,
             "anilist_links": anilist.links_confirmed,
             "mikan_links": mikan,
+            "posters_stored": warmup.stored,
+            "posters_failed": warmup.failed,
         }
 
     async def operator_poll_mikan(_parameters: dict[str, object]) -> dict[str, object]:
@@ -789,6 +832,17 @@ async def run_worker() -> None:
                     await _project_fresh_snapshots(components)
                 except Exception as exc:
                     logger.exception("worker.projection", extra={"error": str(exc)})
+                try:
+                    await components.poster_warmup.run_once(limit=20)
+                    components.poster_cache.cleanup(
+                        maximum_bytes=settings.card_cache_max_bytes,
+                        target_bytes=settings.card_cache_target_bytes,
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "worker.poster_warmup",
+                        extra={"error_type": type(exc).__name__},
+                    )
                 next_catalog_sync_at = now + timedelta(seconds=settings.bangumi_data_sync_seconds)
             try:
                 await _drive_release_batches(components, now)
@@ -822,6 +876,7 @@ async def run_worker() -> None:
         await components.bangumi_client.aclose()
         await components.anilist_client.aclose()
         await components.mikan_client.aclose()
+        await components.poster_cache.aclose()
         await components.engine.dispose()
 
 

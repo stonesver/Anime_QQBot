@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, ValidationInfo, field_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -32,6 +34,14 @@ class Settings(BaseSettings):
     processed_event_retention_days: Annotated[int, Field(gt=0)] = 7
     delivery_retention_days: Annotated[int, Field(gt=0)] = 90
 
+    card_asset_root: str = "/var/lib/anime-qqbot/cards"
+    card_cache_max_bytes: Annotated[int, Field(gt=0)] = 314_572_800
+    card_cache_target_bytes: Annotated[int, Field(gt=0)] = 283_115_520
+    poster_download_max_bytes: Annotated[int, Field(gt=0)] = 8_388_608
+    poster_decode_max_pixels: Annotated[int, Field(gt=0)] = 30_000_000
+    poster_connect_timeout_seconds: Annotated[float, Field(gt=0)] = 3
+    poster_total_timeout_seconds: Annotated[float, Field(gt=0)] = 10
+
     # v0.3 is introduced behind release switches so a production upgrade keeps
     # the v0.2 command surface until the operator explicitly enables each seam.
     interaction_gateway_enabled: bool = False
@@ -45,6 +55,12 @@ class Settings(BaseSettings):
     send_user_limit_per_minute: Annotated[int, Field(ge=1, le=100)] = 10
     send_proactive_group_interval_seconds: Annotated[float, Field(gt=0, le=3600)] = 60
     send_proactive_group_limit_per_10_minutes: Annotated[int, Field(ge=1, le=100)] = 3
+
+    @model_validator(mode="after")
+    def validate_card_cache_limits(self) -> Settings:
+        if self.card_cache_target_bytes >= self.card_cache_max_bytes:
+            raise ValueError("card cache target must be below its maximum")
+        return self
 
     @field_validator("bangumi_api_base_url")
     @classmethod
