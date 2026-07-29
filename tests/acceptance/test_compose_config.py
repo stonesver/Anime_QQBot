@@ -37,7 +37,9 @@ def test_napcat_uses_reverse_ws_with_token() -> None:
     assert "ONEBOT_TOKEN must be set" in compose
     assert "BANGUMI_USER_AGENT must be set" in compose
     assert '"token": "\'"${token}"\'"' in entrypoint
-    assert "> /app/templates/astrbot.json" in entrypoint
+    assert "NAPCAT_TEMPLATE_PATH:-/app/templates/astrbot.json" in entrypoint
+    assert "NAPCAT_CONFIG_DIR:-/app/napcat/config" in entrypoint
+    assert '"$config_dir"/onebot11_*.json' in entrypoint
     assert "export MODE=astrbot" in entrypoint
     assert "NAPCAT_ONEBOT_URL: http://napcat:3000" in compose
     assert "NAPCAT_STATUS_POLL_SECONDS: 60" in compose
