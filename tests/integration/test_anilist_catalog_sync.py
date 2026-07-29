@@ -36,6 +36,7 @@ class _StubAniList:
         self._schedules = schedules or {}
         self._searches = searches or {}
         self.calls: list[int] = []
+        self.search_calls: list[str] = []
 
     async def fetch_media(self, anilist_id: int) -> AnimeDetail | None:
         self.calls.append(anilist_id)
@@ -45,6 +46,7 @@ class _StubAniList:
         return self._schedules.get(anilist_id, [])
 
     async def search(self, query_text: str) -> list[AnimeSummary]:
+        self.search_calls.append(query_text)
         return self._searches.get(query_text, [])
 
 
@@ -215,6 +217,7 @@ async def test_confirmed_link_persists_exact_airing_schedule(session_factory) ->
         "candidate_native",
         "candidate_display",
         "search_title",
+        "expected_searches",
     ),
     [
         (
@@ -223,6 +226,7 @@ async def test_confirmed_link_persists_exact_airing_schedule(session_factory) ->
             "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",
             "Tai-Ari deshita.",
             "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",
+            ("対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",),
         ),
         (
             "別の日本語検索名",
@@ -230,6 +234,7 @@ async def test_confirmed_link_persists_exact_airing_schedule(session_factory) ->
             "別の原生題",
             "Shared International Title",
             "別の日本語検索名",
+            ("別の日本語検索名",),
         ),
         (
             "検索で見つからない題",
@@ -237,6 +242,7 @@ async def test_confirmed_link_persists_exact_airing_schedule(session_factory) ->
             "Discoverable Shared Title",
             "Different Display Title",
             "Discoverable Shared Title",
+            ("検索で見つからない題", "Discoverable Shared Title"),
         ),
     ],
 )
@@ -247,6 +253,7 @@ async def test_discovery_confirms_unique_exact_known_title_and_air_date(
     candidate_native: str,
     candidate_display: str,
     search_title: str,
+    expected_searches: tuple[str, ...],
 ) -> None:
     now = datetime(2026, 7, 29, tzinfo=UTC)
     anime_id = uuid4()
@@ -356,3 +363,5 @@ async def test_discovery_confirms_unique_exact_known_title_and_air_date(
     assert link.anime_id == anime_id
     assert link.status == "confirmed"
     assert link.evidence_type == "title_season_year"
+    assert stub.search_calls == list(expected_searches)
+    assert stub.calls == [128757]

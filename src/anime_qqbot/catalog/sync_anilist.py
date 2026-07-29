@@ -101,6 +101,20 @@ class AniListSyncService:
             next_cursor=str(anilist_id),
         )
 
+    async def sync_airing_schedule(
+        self,
+        *,
+        anilist_id: int,
+        anime_id: UUID,
+        entry_id: UUID,
+    ) -> None:
+        occurrences = await self._anilist.airing_schedule(anilist_id)
+        await self._write_repo.upsert_airing_occurrences(
+            anime_id=anime_id,
+            source_entry_id=entry_id,
+            occurrences=occurrences,
+        )
+
     async def sync_batch(self, anilist_ids: list[int]) -> AniListSyncResult:
         processed = 0
         failed = 0

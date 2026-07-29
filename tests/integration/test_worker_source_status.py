@@ -33,8 +33,9 @@ async def test_successful_bangumi_cycle_persists_source_success(
         assert limit == 100
         return 3
 
-    async def ingest(_components, *, limit: int) -> None:
+    async def ingest(_components, *, limit: int, providers: tuple[str, ...]) -> None:
         assert limit == 100
+        assert providers == (cli.SOURCE_BANGUMI,)
 
     monkeypatch.setattr(cli, "_discover_calendar_subjects", discover)
     monkeypatch.setattr(cli, "_ingest_known_subjects", ingest)
@@ -52,6 +53,37 @@ async def test_successful_bangumi_cycle_persists_source_success(
     assert state.last_success_at == now
     assert state.last_failure_at is None
     assert state.last_error is None
+
+
+async def test_anilist_cycle_discovers_before_small_refresh(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Discovery:
+        async def run_once(self, *, limit: int):
+            calls.append(("discover", limit))
+            return SimpleNamespace(links_confirmed=2)
+
+    async def ingest(
+        _components,
+        *,
+        limit: int,
+        providers: tuple[str, ...],
+    ) -> None:
+        calls.append(("refresh", (limit, providers)))
+
+    monkeypatch.setattr(cli, "_ingest_known_subjects", ingest)
+
+    result = await cli._sync_anilist_catalog(
+        SimpleNamespace(anilist_discovery=Discovery()),
+        discovery_limit=20,
+        refresh_limit=10,
+    )
+
+    assert result.links_confirmed == 2
+    assert calls == [
+        ("discover", 20),
+        ("refresh", (10, (cli.SOURCE_ANILIST,))),
+    ]
 
 
 async def test_failed_bangumi_cycle_persists_source_failure(

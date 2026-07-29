@@ -111,22 +111,21 @@ class AniListLinkDiscoveryService:
             snapshot.payload.get("title_cn"),
         )
         known_titles = _normalized_titles(*search_titles)
-        search_results: dict[int, AnimeSummary] = {}
         for search_title in search_titles:
-            for candidate in await self._anilist.search(search_title):
-                search_results[candidate.subject_id] = candidate
-        candidates = [
-            candidate
-            for candidate in search_results.values()
-            if not candidate.nsfw
-            and candidate.air_date == air_date
-            and known_titles.intersection(
-                _normalized_titles(candidate.title_cn, candidate.title_jp)
-            )
-        ]
-        if len(candidates) != 1:
-            return False
-        return await self._confirm(anime_id, candidates[0].subject_id)
+            candidates = [
+                candidate
+                for candidate in await self._anilist.search(search_title)
+                if not candidate.nsfw
+                and candidate.air_date == air_date
+                and known_titles.intersection(
+                    _normalized_titles(candidate.title_cn, candidate.title_jp)
+                )
+            ]
+            if len(candidates) == 1:
+                return await self._confirm(anime_id, candidates[0].subject_id)
+            if len(candidates) > 1:
+                return False
+        return False
 
     async def _confirm(self, anime_id: UUID, anilist_id: int) -> bool:
         delta = await self._sync.sync_subject(anilist_id)
@@ -156,7 +155,11 @@ class AniListLinkDiscoveryService:
                 status=LinkStatus.CONFIRMED.value,
                 reviewed_by="anilist_exact_native_date_v1",
             )
-        await self._sync.sync_subject(anilist_id)
+        await self._sync.sync_airing_schedule(
+            anilist_id=anilist_id,
+            anime_id=anime_id,
+            entry_id=entry_id,
+        )
         return True
 
     async def _targets(

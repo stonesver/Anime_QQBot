@@ -114,7 +114,9 @@ Mikan 更新不会再投递，以免服务恢复后刷屏。
 “番剧目录”展示每部番剧的已确认来源、下一次预计放送、时间精度、AniList 映射状态和
 最近同步时间。总览中的“已同步番剧 / AniList 映射”和“未来有计划 / 精确时刻”用于
 区分目录同步停止与精确时间覆盖不足；仅有 Bangumi 日期时显示“仅日期”，不表示 Worker
-未同步。数据源页应同时出现 Bangumi、AniList 和 Mikan 最近成功或失败状态。
+未同步。数据源页应同时出现 Bangumi、AniList 和 Mikan 最近成功或失败状态。若 AniList
+显示 `rate limited`，Bangumi 日期仍可正常查询，但精确时刻覆盖会暂停增长；同步循环会
+先补缺失映射，再以小批量刷新已确认条目，并在限流后停止本轮 AniList 请求。
 
 总览顶部的 QQ Session 横幅每 30 秒刷新一次，AstrBot 后台每 60 秒通过 Compose
 内网调用 NapCat `get_status`：

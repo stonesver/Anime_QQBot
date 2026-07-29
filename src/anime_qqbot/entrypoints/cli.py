@@ -36,7 +36,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from anime_qqbot.catalog.adapters.anilist import AniListClient, AniListConfig
 from anime_qqbot.catalog.adapters.bangumi import BangumiClient
-from anime_qqbot.catalog.anilist_mapping import AniListLinkDiscoveryService
+from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
+from anime_qqbot.catalog.anilist_mapping import (
+    AniListDiscoveryResult,
+    AniListLinkDiscoveryService,
+)
 from anime_qqbot.catalog.bangumi_sync import BangumiCatalogSync
 from anime_qqbot.catalog.enrichment import CatalogEnrichmentRunner
 from anime_qqbot.catalog.models import LinkEvidenceType, LinkStatus
@@ -235,6 +239,7 @@ async def _ingest_known_subjects(
     components: WorkerComponents,
     *,
     limit: int,
+    providers: tuple[str, ...],
 ) -> None:
     """Drive Bangumi + AniList ingestion for subjects already in the catalog.
 
@@ -243,7 +248,7 @@ async def _ingest_known_subjects(
     """
     entries: list[ExternalEntry] = []
     async with components.sessions() as session:
-        for provider in (SOURCE_BANGUMI, SOURCE_ANILIST):
+        for provider in providers:
             entries.extend(
                 (
                     await session.execute(
@@ -264,6 +269,13 @@ async def _ingest_known_subjects(
                 await components.bangumi_sync.sync_subject(subject_id=int(entry.external_id))
             elif entry.provider == SOURCE_ANILIST:
                 await components.anilist_sync.sync_subject(anilist_id=int(entry.external_id))
+        except ProviderError as exc:
+            logger.warning(
+                "worker.source.sync_failed",
+                extra={"provider": entry.provider, "error": str(exc)},
+            )
+            if exc.kind is ProviderErrorKind.RATE_LIMITED:
+                break
         except Exception as exc:
             logger.warning(
                 "worker.source.sync_failed",
@@ -492,7 +504,11 @@ async def _sync_bangumi_catalog(
 ) -> int:
     try:
         discovered = await _discover_calendar_subjects(components, limit=limit)
-        await _ingest_known_subjects(components, limit=limit)
+        await _ingest_known_subjects(
+            components,
+            limit=limit,
+            providers=(SOURCE_BANGUMI,),
+        )
     except Exception as exc:
         await _record_source_failure(
             components.sessions,
@@ -507,6 +523,21 @@ async def _sync_bangumi_catalog(
         now,
     )
     return discovered
+
+
+async def _sync_anilist_catalog(
+    components: WorkerComponents,
+    *,
+    discovery_limit: int,
+    refresh_limit: int,
+) -> AniListDiscoveryResult:
+    result = await components.anilist_discovery.run_once(limit=discovery_limit)
+    await _ingest_known_subjects(
+        components,
+        limit=refresh_limit,
+        providers=(SOURCE_ANILIST,),
+    )
+    return result
 
 
 async def _plan_airing_reminders(components: WorkerComponents, now: datetime) -> int:
@@ -768,7 +799,11 @@ async def run_worker() -> None:
             now=components.clock.now(),
             limit=100,
         )
-        anilist = await components.anilist_discovery.run_once(limit=20)
+        anilist = await _sync_anilist_catalog(
+            components,
+            discovery_limit=20,
+            refresh_limit=10,
+        )
         mikan = await _discover_mikan_links(
             components.sessions,
             components.mikan_client,
@@ -828,7 +863,11 @@ async def run_worker() -> None:
                 except Exception as exc:
                     logger.exception("worker.bangumi.sync", extra={"error": str(exc)})
                 try:
-                    await components.anilist_discovery.run_once(limit=20)
+                    await _sync_anilist_catalog(
+                        components,
+                        discovery_limit=20,
+                        refresh_limit=10,
+                    )
                 except Exception as exc:
                     await _record_source_failure(
                         components.sessions,
