@@ -18,7 +18,7 @@
 |---|---|---|---|
 | `Dockerfile` | `latest` | `linux/amd64` | 自动 |
 | `Dockerfile.postgres` | `vendor-postgres-17.4-alpine` | `linux/amd64` | 人工 |
-| `Dockerfile.napcat` | `vendor-napcat-v4.18.13` | `linux/amd64` | 人工 |
+| `Dockerfile.napcat` | `vendor-napcat-v4.17.50` | `linux/amd64` | 人工 |
 
 三条规则都使用 Branch `main`、构建上下文 `/`。只有应用 `latest` 随代码变化自动
 构建；两个 vendor 规则只在固定第三方版本变化时人工触发，避免普通应用发布改变
@@ -63,7 +63,7 @@ chmod 600 .env
 APP_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot
 IMAGE_TAG=latest
 POSTGRES_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-postgres-17.4-alpine
-NAPCAT_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.18.13
+NAPCAT_IMAGE=crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.17.50
 COMPOSE_FILE=compose.yaml:compose.server-2g.yaml
 POSTGRES_PASSWORD=<现有 anime 数据库角色密码>
 BANGUMI_USER_AGENT=anime-qqbot/0.3.0 (your-email@example.com)

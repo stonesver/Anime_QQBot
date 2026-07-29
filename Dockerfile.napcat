@@ -1,1 +1,1 @@
-FROM mlikiowa/napcat-docker:v4.18.13
+FROM mlikiowa/napcat-docker:v4.17.50

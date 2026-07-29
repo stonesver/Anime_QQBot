@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 ACR_IMAGE = "crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot"
 POSTGRES_IMAGE = f"{ACR_IMAGE}:vendor-postgres-17.4-alpine"
-NAPCAT_IMAGE = f"{ACR_IMAGE}:vendor-napcat-v4.18.13"
+NAPCAT_IMAGE = f"{ACR_IMAGE}:vendor-napcat-v4.17.50"
 
 
 def _make_project(tmp_path: Path) -> Path:

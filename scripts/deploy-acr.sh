@@ -56,7 +56,7 @@ token="$(read_env ONEBOT_TOKEN)"
 [ -n "$app_image" ] || fail "APP_IMAGE is missing from .env"
 [ -n "$image_tag" ] || fail "IMAGE_TAG is missing from .env"
 postgres_image="${postgres_image:-${app_image}:vendor-postgres-17.4-alpine}"
-napcat_image="${napcat_image:-${app_image}:vendor-napcat-v4.18.13}"
+napcat_image="${napcat_image:-${app_image}:vendor-napcat-v4.17.50}"
 [ "$compose_file" = "compose.yaml:compose.server-2g.yaml" ] ||
   fail "COMPOSE_FILE must be compose.yaml:compose.server-2g.yaml"
 [ -n "$password" ] || fail "POSTGRES_PASSWORD is missing from .env"

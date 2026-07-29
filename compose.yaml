@@ -113,7 +113,7 @@ services:
         condition: service_completed_successfully
 
   napcat:
-    image: ${NAPCAT_IMAGE:-crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.18.13}
+    image: ${NAPCAT_IMAGE:-crpi-thkewd16qu1tdfsq.cn-shenzhen.personal.cr.aliyuncs.com/stonesver/anime-qqbot:vendor-napcat-v4.17.50}
     entrypoint: ["/bin/bash", "/usr/local/bin/anime-napcat-entrypoint"]
     environment:
       NAPCAT_UID: ${NAPCAT_UID:-1000}
