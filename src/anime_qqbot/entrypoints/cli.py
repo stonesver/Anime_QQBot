@@ -484,6 +484,31 @@ async def _record_source_failure(
             row.updated_at = now
 
 
+async def _sync_bangumi_catalog(
+    components: WorkerComponents,
+    *,
+    now: datetime,
+    limit: int,
+) -> int:
+    try:
+        discovered = await _discover_calendar_subjects(components, limit=limit)
+        await _ingest_known_subjects(components, limit=limit)
+    except Exception as exc:
+        await _record_source_failure(
+            components.sessions,
+            SOURCE_BANGUMI,
+            now,
+            str(exc),
+        )
+        raise
+    await _record_source_success(
+        components.sessions,
+        SOURCE_BANGUMI,
+        now,
+    )
+    return discovered
+
+
 async def _plan_airing_reminders(components: WorkerComponents, now: datetime) -> int:
     """Walk recent/upcoming Airing Occurrences and enqueue per-group jobs.
 
@@ -738,8 +763,11 @@ async def run_worker() -> None:
                 "posters_stored": warmup.stored,
                 "posters_failed": warmup.failed,
             }
-        discovered = await _discover_calendar_subjects(components, limit=100)
-        await _ingest_known_subjects(components, limit=100)
+        discovered = await _sync_bangumi_catalog(
+            components,
+            now=components.clock.now(),
+            limit=100,
+        )
         anilist = await components.anilist_discovery.run_once(limit=20)
         mikan = await _discover_mikan_links(
             components.sessions,
@@ -792,13 +820,13 @@ async def run_worker() -> None:
             now = components.clock.now()
             if _catalog_sync_is_due(now, next_catalog_sync_at):
                 try:
-                    await _discover_calendar_subjects(components, limit=100)
+                    await _sync_bangumi_catalog(
+                        components,
+                        now=now,
+                        limit=100,
+                    )
                 except Exception as exc:
-                    logger.exception("worker.calendar", extra={"error": str(exc)})
-                try:
-                    await _ingest_known_subjects(components, limit=100)
-                except Exception as exc:
-                    logger.exception("worker.ingest", extra={"error": str(exc)})
+                    logger.exception("worker.bangumi.sync", extra={"error": str(exc)})
                 try:
                     await components.anilist_discovery.run_once(limit=20)
                 except Exception as exc:

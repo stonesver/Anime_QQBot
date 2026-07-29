@@ -266,9 +266,11 @@ class EventAdapter:
         sessions: async_sessionmaker[AsyncSession] | None,
         handlers: dict[IntentKind, UseCaseHandler] | None = None,
         card_reply_builder: CardReplyBuilder | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._sessions = sessions
         self._card_reply_builder = card_reply_builder
+        self._clock = clock or _now
         self._handlers = handlers or self._default_handlers()
 
     async def _present_query(self, result: QueryResult, *, ctx: ChatContext) -> Reply:
@@ -287,7 +289,7 @@ class EventAdapter:
             anime_id=result.detail.id,
             ctx=ctx,
             fallback=fallback,
-            now=_now(),
+            now=self._clock(),
         )
 
     async def handle_message(
@@ -435,22 +437,32 @@ class EventAdapter:
         async def _today(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            instant = _now()
             if intent.query:
                 from datetime import date as date_type
 
-                selected = date_type.fromisoformat(intent.query)
-                instant = datetime.combine(
-                    selected,
-                    datetime.min.time(),
-                    tzinfo=ctx.timezone,
-                ).astimezone(UTC)
-            return await self._present_query(await today_listing(s, now=instant), ctx=ctx)
+                target_date = date_type.fromisoformat(intent.query)
+            else:
+                target_date = self._clock().astimezone(ctx.timezone).date()
+            return await self._present_query(
+                await today_listing(
+                    s,
+                    target_date=target_date,
+                    timezone=ctx.timezone,
+                ),
+                ctx=ctx,
+            )
 
         async def _week(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            return await self._present_query(await week_listing(s, now=_now()), ctx=ctx)
+            return await self._present_query(
+                await week_listing(
+                    s,
+                    now=self._clock(),
+                    timezone=ctx.timezone,
+                ),
+                ctx=ctx,
+            )
 
         async def _search(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
@@ -463,7 +475,7 @@ class EventAdapter:
         async def _season(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
-            now = _now()
+            now = self._clock()
             return await self._present_query(
                 await season_listing(
                     s,
@@ -485,7 +497,12 @@ class EventAdapter:
             if s is None:
                 return await _no_db()
             return await self._present_query(
-                await next_airing_for(s, anime_id=intent.anime_id, query=intent.query, now=_now()),
+                await next_airing_for(
+                    s,
+                    anime_id=intent.anime_id,
+                    query=intent.query,
+                    now=self._clock(),
+                ),
                 ctx=ctx,
             )
 

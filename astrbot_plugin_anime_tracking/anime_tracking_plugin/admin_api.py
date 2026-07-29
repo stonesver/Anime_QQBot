@@ -44,6 +44,7 @@ class AdminWebAPI:
             return
         routes = (
             ("overview", self.overview, ["GET"]),
+            ("catalog", self.catalog, ["GET"]),
             ("groups", self.groups, ["GET"]),
             ("subscriptions", self.subscriptions, ["GET"]),
             ("mappings", self.mappings, ["GET"]),
@@ -76,6 +77,14 @@ class AdminWebAPI:
 
     async def overview(self) -> object:
         return await self._read("overview")
+
+    async def catalog(self) -> object:
+        return await self._read(
+            "catalog",
+            query=self._query("query", ""),
+            page=self._query_int("page", 1),
+            page_size=self._query_int("page_size", 50),
+        )
 
     async def groups(self) -> object:
         return await self._read(

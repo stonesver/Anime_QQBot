@@ -80,6 +80,8 @@ async function loadOverview(showLoading = true) {
     const data = await bridge.apiGet("overview");
     renderNapcatStatus(data.napcat_status);
     const metrics = [
+      ["已同步番剧", data.catalog_animes], ["AniList 映射", `${data.anilist_mapped}/${data.catalog_animes}`],
+      ["未来有计划", data.future_airing_animes], ["精确时刻", `${data.future_exact_animes}/${data.future_airing_animes}`],
       ["已登记群", data.groups], ["有效订阅", data.subscriptions],
       ["等待通知", data.pending_notifications], ["异常通知", data.failed_notifications],
       ["待确认映射", data.pending_mappings],
@@ -92,6 +94,29 @@ async function loadOverview(showLoading = true) {
   } finally {
     state.overviewLoading = false;
   }
+}
+
+function catalogAiring(item) {
+  if (!item.next_air_date) return "暂无后续计划";
+  if (!item.next_air_at) return `${escapeHtml(item.next_air_date)} · 待定`;
+  return formatTime(item.next_air_at);
+}
+
+async function loadCatalog() {
+  loading("#catalog-content");
+  try {
+    const data = await bridge.apiGet("catalog", { query: $("#catalog-query").value, page: 1, page_size: 50 });
+    if (!data.items.length) return $("#catalog-content").innerHTML = empty("没有匹配的已同步番剧。");
+    $("#catalog-content").innerHTML = `<table><thead><tr><th>番剧</th><th>来源</th><th>下一次放送</th><th>精度</th><th>最近同步</th></tr></thead><tbody>${
+      data.items.map((item) => `<tr>
+        <td><strong class="catalog-title">${escapeHtml(item.title)}</strong><code class="catalog-id">${escapeHtml(item.id)}</code></td>
+        <td><div class="source-tags">${item.sources.map((source) => `<span>${escapeHtml(source)}</span>`).join("") || "—"}</div></td>
+        <td>${catalogAiring(item)}${item.next_episode ? `<small class="episode-label">第 ${escapeHtml(item.next_episode)} 集</small>` : ""}</td>
+        <td>${item.precision === "exact" ? '<span class="status good">精确时刻</span>' : item.precision === "date_only" ? '<span class="status warn">仅日期</span>' : "—"}</td>
+        <td>${formatTime(item.last_synced_at)}</td>
+      </tr>`).join("")
+    }</tbody></table>`;
+  } catch (reason) { error("#catalog-content", reason); }
 }
 
 async function loadGroups() {
@@ -172,7 +197,7 @@ async function loadSources() {
   } catch (reason) { error("#sources-content", reason); error("#jobs-content", reason); }
 }
 
-const loaders = { overview: loadOverview, groups: loadGroups, subscriptions: loadSubscriptions, mappings: loadMappings, notifications: loadNotifications, sources: loadSources };
+const loaders = { overview: loadOverview, catalog: loadCatalog, groups: loadGroups, subscriptions: loadSubscriptions, mappings: loadMappings, notifications: loadNotifications, sources: loadSources };
 async function switchView(view) {
   state.view = view;
   document.querySelectorAll(".tab").forEach((node) => node.classList.toggle("active", node.dataset.view === view));
@@ -223,6 +248,7 @@ document.addEventListener("click", async (event) => {
 });
 
 $("#group-query").addEventListener("change", loadGroups);
+$("#catalog-query").addEventListener("change", loadCatalog);
 $("#subscription-query").addEventListener("change", loadSubscriptions);
 $("#notification-status").addEventListener("change", loadNotifications);
 

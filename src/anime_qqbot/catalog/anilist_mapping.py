@@ -106,13 +106,23 @@ class AniListLinkDiscoveryService:
         air_date = _parse_date(snapshot.payload.get("air_date"))
         if not isinstance(title, str) or not title or air_date is None:
             return False
+        search_titles = _source_titles(
+            snapshot.payload.get("title_jp"),
+            snapshot.payload.get("title_cn"),
+        )
+        known_titles = _normalized_titles(*search_titles)
+        search_results: dict[int, AnimeSummary] = {}
+        for search_title in search_titles:
+            for candidate in await self._anilist.search(search_title):
+                search_results[candidate.subject_id] = candidate
         candidates = [
             candidate
-            for candidate in await self._anilist.search(title)
+            for candidate in search_results.values()
             if not candidate.nsfw
             and candidate.air_date == air_date
-            and isinstance(candidate.title_cn, str)
-            and _normalize_title(candidate.title_cn) == _normalize_title(title)
+            and known_titles.intersection(
+                _normalized_titles(candidate.title_cn, candidate.title_jp)
+            )
         ]
         if len(candidates) != 1:
             return False
@@ -243,6 +253,24 @@ class AniListLinkDiscoveryService:
 
 def _normalize_title(title: str) -> str:
     return "".join(unicodedata.normalize("NFKC", title).casefold().split())
+
+
+def _normalized_titles(*values: object) -> set[str]:
+    return {_normalize_title(value) for value in values if isinstance(value, str) and value.strip()}
+
+
+def _source_titles(*values: object) -> list[str]:
+    titles: list[str] = []
+    normalized: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            continue
+        key = _normalize_title(value)
+        if key in normalized:
+            continue
+        normalized.add(key)
+        titles.append(value)
+    return titles
 
 
 def _parse_date(value: object) -> date | None:

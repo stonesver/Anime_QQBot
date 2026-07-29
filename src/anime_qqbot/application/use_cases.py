@@ -16,8 +16,9 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.application.context import ChatContext
@@ -112,73 +113,115 @@ async def _resolve_anime(
 async def today_listing(
     sessions: async_sessionmaker[AsyncSession],
     *,
-    now: datetime,
+    target_date: date,
+    timezone: ZoneInfo,
 ) -> QueryResult:
     """Anime with an Airing Occurrence on the given day.
 
     Honors the nsfw filter: rows with ``nsfw_flag == 'true'`` are
     excluded. Unknown or ``false`` flags are kept.
     """
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    end = start + timedelta(days=1)
-    async with sessions() as session:
-        stmt = (
-            select(AiringOccurrenceRow, Anime)
-            .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
-            .where(AiringOccurrenceRow.air_date >= start.date())
-            .where(AiringOccurrenceRow.air_date < end.date())
-            .where(Anime.disabled.is_(False))
-            .where(Anime.nsfw_flag != "true")
-            .order_by(AiringOccurrenceRow.air_date.asc(), AiringOccurrenceRow.air_at.asc())
-        )
-        rows = (await session.execute(stmt)).all()
-    anime_rows = tuple(
-        AnimeRow(
-            id=anime.id,
-            display_title=anime.display_title,
-            nsfw_flag=anime.nsfw_flag,
-            disabled=anime.disabled,
-            air_date=occ.air_date,
-            air_at=occ.air_at,
-            episode_label=occ.episode_label,
-        )
-        for occ, anime in rows
+    rows = await _airing_rows_between(
+        sessions,
+        start_date=target_date,
+        end_date=target_date + timedelta(days=1),
+        timezone=timezone,
     )
-    return QueryResult(kind=IntentKind.TODAY, rows=anime_rows)
+    return QueryResult(kind=IntentKind.TODAY, rows=rows)
 
 
 async def week_listing(
     sessions: async_sessionmaker[AsyncSession],
     *,
     now: datetime,
+    timezone: ZoneInfo,
 ) -> QueryResult:
-    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start = today - timedelta(days=today.weekday())
-    end = start + timedelta(days=7)
+    today = now.astimezone(timezone).date()
+    start_date = today - timedelta(days=today.weekday())
+    end_date = start_date + timedelta(days=7)
+    rows = await _airing_rows_between(
+        sessions,
+        start_date=start_date,
+        end_date=end_date,
+        timezone=timezone,
+    )
+    return QueryResult(kind=IntentKind.WEEK, rows=rows)
+
+
+async def _airing_rows_between(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    start_date: date,
+    end_date: date,
+    timezone: ZoneInfo,
+) -> tuple[AnimeRow, ...]:
+    start_at = datetime.combine(
+        start_date,
+        datetime.min.time(),
+        tzinfo=timezone,
+    ).astimezone(UTC)
+    end_at = datetime.combine(
+        end_date,
+        datetime.min.time(),
+        tzinfo=timezone,
+    ).astimezone(UTC)
     async with sessions() as session:
         stmt = (
             select(AiringOccurrenceRow, Anime)
             .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
-            .where(AiringOccurrenceRow.air_date >= start.date())
-            .where(AiringOccurrenceRow.air_date < end.date())
+            .where(
+                or_(
+                    and_(
+                        AiringOccurrenceRow.air_at.is_(None),
+                        AiringOccurrenceRow.air_date >= start_date,
+                        AiringOccurrenceRow.air_date < end_date,
+                    ),
+                    and_(
+                        AiringOccurrenceRow.air_at.is_not(None),
+                        AiringOccurrenceRow.air_at >= start_at,
+                        AiringOccurrenceRow.air_at < end_at,
+                    ),
+                )
+            )
             .where(Anime.disabled.is_(False))
             .where(Anime.nsfw_flag != "true")
             .order_by(AiringOccurrenceRow.air_date.asc(), AiringOccurrenceRow.air_at.asc())
         )
         rows = (await session.execute(stmt)).all()
+    selected: dict[tuple[UUID, str], tuple[AiringOccurrenceRow, Anime]] = {}
+    for occurrence, anime in rows:
+        key = (anime.id, occurrence.episode_label)
+        current = selected.get(key)
+        if current is None or (current[0].air_at is None and occurrence.air_at is not None):
+            selected[key] = (occurrence, anime)
+    chosen_rows = sorted(
+        selected.values(),
+        key=lambda row: (
+            (
+                row[0].air_at.astimezone(timezone).date()
+                if row[0].air_at is not None
+                else row[0].air_date
+            ),
+            row[0].air_at is None,
+            row[0].air_at or start_at,
+            row[1].display_title or "",
+        ),
+    )
     anime_rows = tuple(
         AnimeRow(
             id=anime.id,
             display_title=anime.display_title,
             nsfw_flag=anime.nsfw_flag,
             disabled=anime.disabled,
-            air_date=occ.air_date,
+            air_date=(
+                occ.air_at.astimezone(timezone).date() if occ.air_at is not None else occ.air_date
+            ),
             air_at=occ.air_at,
             episode_label=occ.episode_label,
         )
-        for occ, anime in rows
+        for occ, anime in chosen_rows
     )
-    return QueryResult(kind=IntentKind.WEEK, rows=anime_rows)
+    return anime_rows
 
 
 async def season_listing(

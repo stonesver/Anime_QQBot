@@ -472,7 +472,8 @@ async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> Non
     )
 
     factory = _sessions_for(async_engine)
-    now = datetime.now(UTC)
+    now = datetime(2026, 7, 29, 17, 0, tzinfo=UTC)
+    local_date = datetime(2026, 7, 30, tzinfo=UTC).date()
     safe_id = SAMPLE_ANIME_ID
     blocked_id = SECOND_ANIME_ID
     safe_source_id = uuid4()
@@ -524,7 +525,7 @@ async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> Non
                     anime_id=safe_id,
                     source_entry_id=safe_source_id,
                     episode_label="01",
-                    air_date=now.date(),
+                    air_date=local_date,
                     air_at=None,
                     precision="date_only",
                     source_event_key="safe-evt-1",
@@ -535,7 +536,7 @@ async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> Non
                     anime_id=blocked_id,
                     source_entry_id=blocked_source_id,
                     episode_label="01",
-                    air_date=now.date(),
+                    air_date=local_date,
                     air_at=now,
                     precision="exact",
                     source_event_key="blocked-evt-1",
@@ -543,7 +544,7 @@ async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> Non
                 ),
             ]
         )
-    adapter = EventAdapter(sessions=factory)
+    adapter = EventAdapter(sessions=factory, clock=lambda: now)
     reply = await adapter.handle_message(
         platform="qq",
         group_id="100",
@@ -555,6 +556,293 @@ async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> Non
     assert reply.kind == "text"
     assert "安全番剧" in reply.blocks[0].text
     assert "成人番剧" not in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "content",
+    ["/番剧 今天 2026-07-30", "/番剧 今天"],
+)
+async def test_real_today_explicit_date_uses_group_calendar_date(
+    async_engine: AsyncEngine,
+    content: str,
+) -> None:
+    from anime_qqbot.persistence.models.catalog import (
+        AiringOccurrenceRow,
+        Anime,
+        ExternalEntry,
+    )
+
+    factory = _sessions_for(async_engine)
+    now = datetime(2026, 7, 29, 16, 30, tzinfo=UTC)
+    wednesday_entry = uuid4()
+    thursday_entry = uuid4()
+    async with factory() as session, session.begin():
+        session.add_all(
+            [
+                Anime(
+                    id=SAMPLE_ANIME_ID,
+                    display_title="周三番剧",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Anime(
+                    id=SECOND_ANIME_ID,
+                    display_title="周四番剧",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=wednesday_entry,
+                    provider="bangumi",
+                    external_id="wednesday",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=thursday_entry,
+                    provider="bangumi",
+                    external_id="thursday",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SAMPLE_ANIME_ID,
+                    source_entry_id=wednesday_entry,
+                    episode_label="04",
+                    air_date=datetime(2026, 7, 29, tzinfo=UTC).date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="wednesday-04",
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SECOND_ANIME_ID,
+                    source_entry_id=thursday_entry,
+                    episode_label="05",
+                    air_date=datetime(2026, 7, 30, tzinfo=UTC).date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="thursday-05",
+                    updated_at=now,
+                ),
+            ]
+        )
+
+    reply = await EventAdapter(sessions=factory, clock=lambda: now).handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content=content,
+        timezone_name="Asia/Shanghai",
+        now=now,
+    )
+
+    assert "周四番剧" in reply.blocks[0].text
+    assert "周三番剧" not in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_real_today_prefers_exact_airing_in_group_timezone(
+    async_engine: AsyncEngine,
+) -> None:
+    from anime_qqbot.persistence.models.catalog import (
+        AiringOccurrenceRow,
+        Anime,
+        ExternalEntry,
+    )
+
+    factory = _sessions_for(async_engine)
+    now = datetime(2026, 7, 29, 16, 45, tzinfo=UTC)
+    bangumi_entry = uuid4()
+    anilist_entry = uuid4()
+    async with factory() as session, session.begin():
+        session.add(
+            Anime(
+                id=SAMPLE_ANIME_ID,
+                display_title="跨日精确番剧",
+                nsfw_flag="false",
+                disabled=False,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.add_all(
+            [
+                ExternalEntry(
+                    id=bangumi_entry,
+                    provider="bangumi",
+                    external_id="100",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=anilist_entry,
+                    provider="anilist",
+                    external_id="200",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SAMPLE_ANIME_ID,
+                    source_entry_id=bangumi_entry,
+                    episode_label="04",
+                    air_date=datetime(2026, 7, 30, tzinfo=UTC).date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="bangumi-04",
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SAMPLE_ANIME_ID,
+                    source_entry_id=anilist_entry,
+                    episode_label="04",
+                    air_date=datetime(2026, 7, 29, tzinfo=UTC).date(),
+                    air_at=datetime(2026, 7, 29, 16, 30, tzinfo=UTC),
+                    precision="exact",
+                    source_event_key="anilist-04",
+                    updated_at=now,
+                ),
+            ]
+        )
+
+    reply = await EventAdapter(sessions=factory).handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content="/番剧 今天 2026-07-30",
+        timezone_name="Asia/Shanghai",
+        now=now,
+    )
+
+    text = reply.blocks[0].text
+    assert text.count("跨日精确番剧") == 1
+    assert "00:30  跨日精确番剧" in text
+    assert "待定" not in text
+
+
+@pytest.mark.asyncio
+async def test_real_week_uses_group_local_monday(async_engine: AsyncEngine) -> None:
+    from anime_qqbot.persistence.models.catalog import (
+        AiringOccurrenceRow,
+        Anime,
+        ExternalEntry,
+    )
+
+    factory = _sessions_for(async_engine)
+    now = datetime(2026, 7, 26, 16, 30, tzinfo=UTC)
+    previous_entry = uuid4()
+    current_entry = uuid4()
+    async with factory() as session, session.begin():
+        session.add_all(
+            [
+                Anime(
+                    id=SAMPLE_ANIME_ID,
+                    display_title="上周日番剧",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Anime(
+                    id=SECOND_ANIME_ID,
+                    display_title="本周一番剧",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=previous_entry,
+                    provider="bangumi",
+                    external_id="previous-week",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=current_entry,
+                    provider="bangumi",
+                    external_id="current-week",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SAMPLE_ANIME_ID,
+                    source_entry_id=previous_entry,
+                    episode_label="04",
+                    air_date=datetime(2026, 7, 26, tzinfo=UTC).date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="previous-04",
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SECOND_ANIME_ID,
+                    source_entry_id=current_entry,
+                    episode_label="05",
+                    air_date=datetime(2026, 7, 27, tzinfo=UTC).date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="current-05",
+                    updated_at=now,
+                ),
+            ]
+        )
+
+    reply = await EventAdapter(sessions=factory, clock=lambda: now).handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin=None,
+        content="/番剧 本周",
+        timezone_name="Asia/Shanghai",
+        now=now,
+    )
+
+    assert "本周一番剧" in reply.blocks[0].text
+    assert "上周日番剧" not in reply.blocks[0].text
 
 
 @pytest.mark.asyncio

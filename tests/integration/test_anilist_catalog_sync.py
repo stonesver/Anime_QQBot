@@ -208,17 +208,53 @@ async def test_confirmed_link_persists_exact_airing_schedule(session_factory) ->
 
 
 @pytest.mark.asyncio
-async def test_discovery_confirms_unique_exact_native_title_and_air_date(
+@pytest.mark.parametrize(
+    (
+        "bangumi_title_jp",
+        "bangumi_title_cn",
+        "candidate_native",
+        "candidate_display",
+        "search_title",
+    ),
+    [
+        (
+            "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",
+            "感谢对战。",
+            "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",
+            "Tai-Ari deshita.",
+            "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～",
+        ),
+        (
+            "別の日本語検索名",
+            "Shared International Title",
+            "別の原生題",
+            "Shared International Title",
+            "別の日本語検索名",
+        ),
+        (
+            "検索で見つからない題",
+            "Discoverable Shared Title",
+            "Discoverable Shared Title",
+            "Different Display Title",
+            "Discoverable Shared Title",
+        ),
+    ],
+)
+async def test_discovery_confirms_unique_exact_known_title_and_air_date(
     session_factory,
+    bangumi_title_jp: str,
+    bangumi_title_cn: str,
+    candidate_native: str,
+    candidate_display: str,
+    search_title: str,
 ) -> None:
     now = datetime(2026, 7, 29, tzinfo=UTC)
     anime_id = uuid4()
     bangumi_entry_id = uuid4()
-    title = "対ありでした。 ～お嬢さまは格闘ゲームなんてしない～"
     candidate = AnimeSummary(
         subject_id=128757,
-        title_cn=title,
-        title_jp="Tai-Ari deshita.",
+        title_cn=candidate_native,
+        title_jp=candidate_display,
         air_date=date(2026, 7, 7),
         nsfw=False,
     )
@@ -235,7 +271,7 @@ async def test_discovery_confirms_unique_exact_native_title_and_air_date(
     )
     stub = _StubAniList(
         {128757: detail},
-        searches={title: [candidate]},
+        searches={search_title: [candidate]},
     )
     async with session_factory() as session, session.begin():
         session.add(
@@ -277,8 +313,8 @@ async def test_discovery_confirms_unique_exact_native_title_and_air_date(
                 external_entry_id=bangumi_entry_id,
                 version=1,
                 payload={
-                    "title_jp": title,
-                    "title_cn": "感谢对战。",
+                    "title_jp": bangumi_title_jp,
+                    "title_cn": bangumi_title_cn,
                     "air_date": "2026-07-07",
                     "total_episodes": 12,
                 },

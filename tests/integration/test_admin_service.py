@@ -14,7 +14,13 @@ from anime_qqbot.operations.napcat_status import NapCatProbeResult, NapCatStatus
 from anime_qqbot.operations.runtime_status_repository import (
     RuntimeComponentStatusRepository,
 )
-from anime_qqbot.persistence.models.catalog import Anime
+from anime_qqbot.persistence.models.catalog import (
+    AiringOccurrenceRow,
+    Anime,
+    AnimeSourceLink,
+    ExternalEntry,
+    SourceSnapshot,
+)
 from anime_qqbot.persistence.models.operations import AdminAuditEvent
 from anime_qqbot.persistence.models.subscriptions_v2 import FollowSubscription
 
@@ -91,6 +97,154 @@ async def test_admin_read_models_are_safe_and_aggregated(session_factory) -> Non
     assert groups["items"][0]["direct_shortcuts_enabled"] is False
     assert "unified_msg_origin" not in groups["items"][0]
     assert subscriptions["items"][0]["user_id"] == "123…789"
+
+
+async def test_admin_catalog_exposes_sync_and_airing_coverage(
+    session_factory,
+) -> None:
+    now = datetime(2026, 7, 30, 1, 0, tzinfo=UTC)
+    exact_anime_id = uuid4()
+    date_only_anime_id = uuid4()
+    bangumi_exact_id = uuid4()
+    anilist_exact_id = uuid4()
+    bangumi_date_only_id = uuid4()
+    async with session_factory() as session, session.begin():
+        session.add_all(
+            [
+                Anime(
+                    id=exact_anime_id,
+                    nsfw_flag="false",
+                    disabled=False,
+                    display_title="精确目录番剧",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Anime(
+                    id=date_only_anime_id,
+                    nsfw_flag="false",
+                    disabled=False,
+                    display_title="日期目录番剧",
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=bangumi_exact_id,
+                    provider="bangumi",
+                    external_id="100",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=anilist_exact_id,
+                    provider="anilist",
+                    external_id="200",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=bangumi_date_only_id,
+                    provider="bangumi",
+                    external_id="300",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+            ]
+        )
+        await session.flush()
+        session.add_all(
+            [
+                AnimeSourceLink(
+                    id=uuid4(),
+                    anime_id=exact_anime_id,
+                    external_entry_id=bangumi_exact_id,
+                    status="confirmed",
+                    evidence_type="manual",
+                    confidence=1.0,
+                    method="fixture",
+                    created_at=now,
+                ),
+                AnimeSourceLink(
+                    id=uuid4(),
+                    anime_id=exact_anime_id,
+                    external_entry_id=anilist_exact_id,
+                    status="confirmed",
+                    evidence_type="title_season_year",
+                    confidence=0.9,
+                    method="fixture",
+                    created_at=now,
+                ),
+                AnimeSourceLink(
+                    id=uuid4(),
+                    anime_id=date_only_anime_id,
+                    external_entry_id=bangumi_date_only_id,
+                    status="confirmed",
+                    evidence_type="manual",
+                    confidence=1.0,
+                    method="fixture",
+                    created_at=now,
+                ),
+                SourceSnapshot(
+                    id=uuid4(),
+                    external_entry_id=anilist_exact_id,
+                    version=1,
+                    payload={"title_jp": "Exact"},
+                    source_time=now,
+                    fetched_at=now,
+                    expires_at=None,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=exact_anime_id,
+                    source_entry_id=anilist_exact_id,
+                    episode_label="04",
+                    air_date=datetime(2027, 1, 1, tzinfo=UTC).date(),
+                    air_at=datetime(2027, 1, 1, 12, 30, tzinfo=UTC),
+                    precision="exact",
+                    source_event_key="exact-04",
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=date_only_anime_id,
+                    source_entry_id=bangumi_date_only_id,
+                    episode_label="05",
+                    air_date=datetime(2027, 1, 2, tzinfo=UTC).date(),
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="date-only-05",
+                    updated_at=now,
+                ),
+            ]
+        )
+
+    service = AdminService(session_factory)
+    overview = await service.overview()
+    catalog = await service.catalog(query="精确目录")
+
+    assert overview["catalog_animes"] == 2
+    assert overview["anilist_mapped"] == 1
+    assert overview["future_airing_animes"] == 2
+    assert overview["future_exact_animes"] == 1
+    assert catalog["total"] == 1
+    assert catalog["items"] == [
+        {
+            "id": str(exact_anime_id),
+            "title": "精确目录番剧",
+            "sources": ["anilist", "bangumi"],
+            "anilist_mapped": True,
+            "next_air_date": "2027-01-01",
+            "next_air_at": "2027-01-01T12:30:00+00:00",
+            "next_episode": "04",
+            "precision": "exact",
+            "last_synced_at": "2026-07-30T01:00:00+00:00",
+        }
+    ]
 
 
 async def test_admin_group_update_and_delivery_control_are_audited(

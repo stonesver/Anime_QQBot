@@ -28,6 +28,7 @@
 
       <nav class="tabs" aria-label="管理区域">
         <button class="tab active" data-view="overview">总览</button>
+        <button class="tab" data-view="catalog">番剧目录</button>
         <button class="tab" data-view="groups">群设置</button>
         <button class="tab" data-view="subscriptions">订阅</button>
         <button class="tab" data-view="mappings">映射</button>
@@ -82,6 +83,20 @@
               <div class="empty">还没有状态变化记录。</div>
             </div>
           </article>
+        </section>
+
+        <section id="view-catalog" class="view" aria-labelledby="catalog-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">SYNCED LINEUP</p>
+              <h2 id="catalog-title">已同步番剧</h2>
+            </div>
+            <label class="search">
+              <span>筛选</span>
+              <input id="catalog-query" type="search" placeholder="输入番剧标题" />
+            </label>
+          </div>
+          <div id="catalog-content" class="table-wrap"></div>
         </section>
 
         <section id="view-groups" class="view" aria-labelledby="groups-title">

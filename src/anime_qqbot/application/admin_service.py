@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.groups.repository_v2 import ChatGroupRepository
@@ -22,9 +23,11 @@ from anime_qqbot.operations.runtime_status_repository import (
     RuntimeComponentStatusRepository,
 )
 from anime_qqbot.persistence.models.catalog import (
+    AiringOccurrenceRow,
     Anime,
     AnimeSourceLink,
     ExternalEntry,
+    SourceSnapshot,
     SourceSyncState,
 )
 from anime_qqbot.persistence.models.identity import ChatGroup
@@ -53,8 +56,27 @@ class AdminService:
         self._runtime_status = RuntimeComponentStatusRepository(sessions)
 
     async def overview(self) -> dict[str, object]:
+        now = datetime.now(UTC)
+        local_today = now.astimezone(ZoneInfo("Asia/Shanghai")).date()
+        future_condition = or_(
+            AiringOccurrenceRow.air_at >= now,
+            and_(
+                AiringOccurrenceRow.air_at.is_(None),
+                AiringOccurrenceRow.air_date >= local_today,
+            ),
+        )
         async with self._sessions() as session:
-            groups, subscriptions, pending, failed, mappings = (
+            (
+                groups,
+                subscriptions,
+                pending,
+                failed,
+                mappings,
+                catalog_animes,
+                anilist_mapped,
+                future_airing_animes,
+                future_exact_animes,
+            ) = (
                 await session.scalar(select(func.count()).select_from(ChatGroup)),
                 await session.scalar(select(func.count()).select_from(FollowSubscription)),
                 await session.scalar(
@@ -72,6 +94,33 @@ class AdminService:
                     .select_from(AnimeSourceLink)
                     .where(AnimeSourceLink.status.in_(("unresolved", "probable")))
                 ),
+                await session.scalar(
+                    select(func.count()).select_from(Anime).where(Anime.disabled.is_(False))
+                ),
+                await session.scalar(
+                    select(func.count(func.distinct(AnimeSourceLink.anime_id)))
+                    .select_from(AnimeSourceLink)
+                    .join(
+                        ExternalEntry,
+                        ExternalEntry.id == AnimeSourceLink.external_entry_id,
+                    )
+                    .where(AnimeSourceLink.status == "confirmed")
+                    .where(ExternalEntry.provider == "anilist")
+                ),
+                await session.scalar(
+                    select(func.count(func.distinct(AiringOccurrenceRow.anime_id)))
+                    .select_from(AiringOccurrenceRow)
+                    .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
+                    .where(Anime.disabled.is_(False))
+                    .where(future_condition)
+                ),
+                await session.scalar(
+                    select(func.count(func.distinct(AiringOccurrenceRow.anime_id)))
+                    .select_from(AiringOccurrenceRow)
+                    .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
+                    .where(Anime.disabled.is_(False))
+                    .where(AiringOccurrenceRow.air_at >= now)
+                ),
             )
         controls = await self._controls.list_controls()
         napcat = await self._runtime_status.get("napcat")
@@ -82,6 +131,10 @@ class AdminService:
             "pending_notifications": int(pending or 0),
             "failed_notifications": int(failed or 0),
             "pending_mappings": int(mappings or 0),
+            "catalog_animes": int(catalog_animes or 0),
+            "anilist_mapped": int(anilist_mapped or 0),
+            "future_airing_animes": int(future_airing_animes or 0),
+            "future_exact_animes": int(future_exact_animes or 0),
             "delivery_paused": any(not row.allows_delivery for row in controls),
             "napcat_status": {
                 "status": napcat.status.value if napcat is not None else "unknown",
@@ -103,6 +156,146 @@ class AdminService:
             },
             "generated_at": datetime.now(UTC).isoformat(),
         }
+
+    async def catalog(
+        self,
+        *,
+        query: str = "",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, object]:
+        page, page_size = _page(page, page_size)
+        conditions = [Anime.disabled.is_(False)]
+        if query:
+            conditions.append(Anime.display_title.ilike(f"%{query[:128]}%"))
+        async with self._sessions() as session:
+            total = await session.scalar(select(func.count()).select_from(Anime).where(*conditions))
+            anime_rows = (
+                (
+                    await session.execute(
+                        select(Anime)
+                        .where(*conditions)
+                        .order_by(Anime.display_title, Anime.id)
+                        .offset((page - 1) * page_size)
+                        .limit(page_size)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            anime_ids = [anime.id for anime in anime_rows]
+            if not anime_ids:
+                return _collection([], int(total or 0), page, page_size)
+
+            source_rows = (
+                await session.execute(
+                    select(AnimeSourceLink.anime_id, ExternalEntry.provider)
+                    .join(
+                        ExternalEntry,
+                        ExternalEntry.id == AnimeSourceLink.external_entry_id,
+                    )
+                    .where(AnimeSourceLink.anime_id.in_(anime_ids))
+                    .where(AnimeSourceLink.status == "confirmed")
+                    .where(ExternalEntry.disabled.is_(False))
+                )
+            ).all()
+
+            now = datetime.now(UTC)
+            timezone = ZoneInfo("Asia/Shanghai")
+            local_today = now.astimezone(timezone).date()
+            occurrence_rows = (
+                (
+                    await session.execute(
+                        select(AiringOccurrenceRow)
+                        .where(AiringOccurrenceRow.anime_id.in_(anime_ids))
+                        .where(
+                            or_(
+                                AiringOccurrenceRow.air_at >= now,
+                                and_(
+                                    AiringOccurrenceRow.air_at.is_(None),
+                                    AiringOccurrenceRow.air_date >= local_today,
+                                ),
+                            )
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            snapshot_rows = (
+                await session.execute(
+                    select(
+                        AnimeSourceLink.anime_id,
+                        func.max(SourceSnapshot.fetched_at),
+                    )
+                    .join(
+                        SourceSnapshot,
+                        SourceSnapshot.external_entry_id == AnimeSourceLink.external_entry_id,
+                    )
+                    .where(AnimeSourceLink.anime_id.in_(anime_ids))
+                    .group_by(AnimeSourceLink.anime_id)
+                )
+            ).all()
+
+        sources: dict[UUID, set[str]] = {anime_id: set() for anime_id in anime_ids}
+        for anime_id, provider in source_rows:
+            sources[anime_id].add(provider)
+
+        sync_times: dict[UUID, datetime] = {}
+        for anime_id, synced_at in snapshot_rows:
+            if synced_at is not None:
+                sync_times[anime_id] = synced_at
+        occurrences: dict[tuple[UUID, str], AiringOccurrenceRow] = {}
+        for occurrence in occurrence_rows:
+            key = (occurrence.anime_id, occurrence.episode_label)
+            current = occurrences.get(key)
+            if current is None or (current.air_at is None and occurrence.air_at is not None):
+                occurrences[key] = occurrence
+            synced_at = sync_times.get(occurrence.anime_id)
+            if synced_at is None or occurrence.updated_at > synced_at:
+                sync_times[occurrence.anime_id] = occurrence.updated_at
+
+        next_by_anime: dict[UUID, AiringOccurrenceRow] = {}
+        for occurrence in occurrences.values():
+            current = next_by_anime.get(occurrence.anime_id)
+            if current is None or _catalog_occurrence_key(
+                occurrence,
+                timezone,
+            ) < _catalog_occurrence_key(current, timezone):
+                next_by_anime[occurrence.anime_id] = occurrence
+
+        items = []
+        for anime in anime_rows:
+            catalog_occurrence = next_by_anime.get(anime.id)
+            providers = sorted(sources[anime.id])
+            local_date = None
+            if catalog_occurrence is not None:
+                local_date = (
+                    catalog_occurrence.air_at.astimezone(timezone).date()
+                    if catalog_occurrence.air_at is not None
+                    else catalog_occurrence.air_date
+                )
+            items.append(
+                {
+                    "id": str(anime.id),
+                    "title": anime.display_title or "未命名番剧",
+                    "sources": providers,
+                    "anilist_mapped": "anilist" in providers,
+                    "next_air_date": local_date.isoformat() if local_date is not None else None,
+                    "next_air_at": _iso(
+                        catalog_occurrence.air_at if catalog_occurrence is not None else None
+                    ),
+                    "next_episode": (
+                        catalog_occurrence.episode_label if catalog_occurrence is not None else None
+                    ),
+                    "precision": (
+                        catalog_occurrence.precision if catalog_occurrence is not None else None
+                    ),
+                    "last_synced_at": _iso(sync_times.get(anime.id)),
+                }
+            )
+        return _collection(items, int(total or 0), page, page_size)
 
     async def groups(
         self, *, query: str = "", page: int = 1, page_size: int = 50
@@ -550,6 +743,16 @@ def _safe_error(value: str | None) -> str | None:
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _catalog_occurrence_key(
+    occurrence: AiringOccurrenceRow,
+    timezone: ZoneInfo,
+) -> tuple[str, str]:
+    if occurrence.air_at is not None:
+        local = occurrence.air_at.astimezone(timezone)
+        return local.date().isoformat(), local.time().isoformat()
+    return occurrence.air_date.isoformat(), "99:99:99"
 
 
 def _uuid(value: str) -> UUID:
