@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, urlsplit
+from zoneinfo import ZoneInfo
 
 import httpx
 from defusedxml.common import DefusedXmlException
@@ -21,6 +22,7 @@ from defusedxml.ElementTree import fromstring
 from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
 
 logger = logging.getLogger(__name__)
+MIKAN_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -231,8 +233,8 @@ def _parse_publish_date(text: str) -> datetime:
     except (TypeError, ValueError):
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed
+        parsed = parsed.replace(tzinfo=MIKAN_TIMEZONE)
+    return parsed.astimezone(UTC)
 
 
 def _validate_public_anime_feed(rss_url: str) -> None:

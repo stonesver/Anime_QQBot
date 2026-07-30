@@ -152,6 +152,7 @@ class MikanReleasePipeline:
             state = await session.get(MikanFeedState, target.state_id)
             etag = state.etag if state is not None else None
             last_modified = state.last_modified if state is not None else None
+            baseline_only = state is None or state.last_success_at is None
 
         result = await self._client.fetch_feed(
             target.rss_url,
@@ -161,7 +162,12 @@ class MikanReleasePipeline:
         created = 0
         if not result.not_modified:
             for item in result.items:
-                created += await self._ingest_item(target, item, now)
+                created += await self._ingest_item(
+                    target,
+                    item,
+                    now,
+                    open_batch=not baseline_only and _is_notification_fresh(item.pub_date, now),
+                )
         await self._record_success(target, result, now)
         return created
 
@@ -170,6 +176,8 @@ class MikanReleasePipeline:
         target: _FeedTarget,
         item: MikanItem,
         now: datetime,
+        *,
+        open_batch: bool,
     ) -> int:
         parsed = parse_release_title(item.title)
         fingerprint = _fingerprint(item)
@@ -191,7 +199,13 @@ class MikanReleasePipeline:
                     anime_id=target.anime_id,
                     mikan_entry_id=target.external_entry_id,
                     parser_version=parsed.parser_version,
-                    status="unmatched" if parsed.episode_label is None else "batched",
+                    status=(
+                        "unmatched"
+                        if parsed.episode_label is None
+                        else "batched"
+                        if open_batch
+                        else "suppressed"
+                    ),
                     discovered_at=now,
                 )
                 .on_conflict_do_nothing()
@@ -200,7 +214,7 @@ class MikanReleasePipeline:
             inserted = (await session.execute(stmt)).scalar_one_or_none()
             if inserted is None:
                 return 0
-            if parsed.episode_label is None:
+            if parsed.episode_label is None or not open_batch:
                 return 1
             batch = await self._open_batch(
                 session,
@@ -359,8 +373,10 @@ class MikanReleasePipeline:
                 )
             ).all()
 
-        expires_at = batch.window_started_at + timedelta(hours=24)
-        if now >= expires_at:
+        releases = [
+            release for release in releases if _is_notification_fresh(release.pub_date, now)
+        ]
+        if not releases:
             async with self._sessions() as session, session.begin():
                 stale = await session.get(ReleaseBatch, batch_id, with_for_update=True)
                 if stale is not None and stale.status == "ready":
@@ -410,7 +426,7 @@ class MikanReleasePipeline:
                     ),
                 },
                 available_at=now,
-                expires_at=expires_at,
+                expires_at=min(release.pub_date for release in selected) + timedelta(hours=24),
             )
 
         async with self._sessions() as session, session.begin():
@@ -437,6 +453,10 @@ def _fingerprint(item: MikanItem) -> str:
     normalized_title = " ".join(item.title.casefold().split())
     material = f"{normalized_title}\n{item.page_url}".encode()
     return hashlib.sha256(material).hexdigest()
+
+
+def _is_notification_fresh(pub_date: datetime, now: datetime) -> bool:
+    return now - timedelta(hours=24) < pub_date <= now
 
 
 def _format_message(

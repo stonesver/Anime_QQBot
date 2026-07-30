@@ -116,7 +116,7 @@ async def test_domestic_feed_parses_namespaced_iso_publish_date() -> None:
 
     assert len(result.items) == 1
     assert result.items[0].guid == "release-domestic-1"
-    assert result.items[0].pub_date == datetime(2026, 7, 29, 10, 20, 30, 123456, tzinfo=UTC)
+    assert result.items[0].pub_date == datetime(2026, 7, 29, 2, 20, 30, 123456, tzinfo=UTC)
     assert result.items[0].page_url == ("https://mikanime.tv/Home/Episode/release-domestic-1")
 
 

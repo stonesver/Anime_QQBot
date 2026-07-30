@@ -160,7 +160,12 @@ async def _seed_target(sessions: async_sessionmaker[AsyncSession]) -> tuple[obje
     return anime_id, group_id
 
 
-def _feed(*, not_modified: bool = False) -> MikanFeedResult:
+def _feed(
+    *,
+    guid: str = "release-1",
+    pub_date: datetime = NOW,
+    not_modified: bool = False,
+) -> MikanFeedResult:
     if not_modified:
         return MikanFeedResult(
             items=(),
@@ -171,10 +176,10 @@ def _feed(*, not_modified: bool = False) -> MikanFeedResult:
     return MikanFeedResult(
         items=(
             MikanItem(
-                guid="release-1",
+                guid=guid,
                 title="[Group A] Example Anime [01][1080p][简日]",
-                pub_date=NOW,
-                page_url="https://mikanani.me/Home/Episode/release-1",
+                pub_date=pub_date,
+                page_url=f"https://mikanani.me/Home/Episode/{guid}",
             ),
         ),
         etag='"v1"',
@@ -182,7 +187,7 @@ def _feed(*, not_modified: bool = False) -> MikanFeedResult:
     )
 
 
-async def test_poll_deduplicates_feed_and_persists_release_batch(
+async def test_poll_deduplicates_feed_and_persists_baseline(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     await _seed_target(sessions)
@@ -208,28 +213,110 @@ async def test_poll_deduplicates_feed_and_persists_release_batch(
         batch_count = await session.scalar(select(func.count()).select_from(ReleaseBatch))
         state = await session.get(MikanFeedState, "mikan:123")
     assert release_count == 1
-    assert batch_count == 1
+    assert batch_count == 0
     assert state is not None
     assert state.etag == '"v1"'
+
+
+async def test_initial_successful_poll_baselines_historical_episodes_without_opening_batches(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_target(sessions)
+    historical_feed = MikanFeedResult(
+        items=tuple(
+            MikanItem(
+                guid=f"historical-release-{episode}",
+                title=f"[Group A] Example Anime [{episode:02d}][1080p][简日]",
+                pub_date=NOW - timedelta(days=episode),
+                page_url=f"https://mikanani.me/Home/Episode/historical-release-{episode}",
+            )
+            for episode in range(1, 7)
+        ),
+        etag='"baseline"',
+        last_modified="Tue, 21 Jul 2026 12:00:00 GMT",
+    )
+    pipeline = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient([historical_feed]),
+        outbox=OutboxRepository(sessions),
+    )
+
+    result = await pipeline.run_once(NOW)
+
+    assert result.releases_created == 6
+    async with sessions() as session:
+        release_count = await session.scalar(select(func.count()).select_from(ResourceRelease))
+        batch_count = await session.scalar(select(func.count()).select_from(ReleaseBatch))
+        job_count = await session.scalar(select(func.count()).select_from(NotificationJob))
+    assert release_count == 6
+    assert batch_count == 0
+    assert job_count == 0
+
+
+async def test_established_feed_does_not_open_batch_for_release_older_than_24_hours(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_target(sessions)
+    empty_baseline = MikanFeedResult(
+        items=(),
+        etag='"baseline"',
+        last_modified="Tue, 28 Jul 2026 11:55:00 GMT",
+    )
+    stale_update = MikanFeedResult(
+        items=(
+            MikanItem(
+                guid="late-discovered-release",
+                title="[Group A] Example Anime [01][1080p][简日]",
+                pub_date=NOW - timedelta(hours=25),
+                page_url="https://mikanani.me/Home/Episode/late-discovered-release",
+            ),
+        ),
+        etag='"update"',
+        last_modified="Tue, 28 Jul 2026 12:05:00 GMT",
+    )
+    pipeline = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient([empty_baseline, stale_update]),
+        outbox=OutboxRepository(sessions),
+    )
+
+    await pipeline.run_once(NOW)
+    result = await pipeline.run_once(NOW + timedelta(minutes=5))
+
+    assert result.releases_created == 1
+    async with sessions() as session:
+        release_count = await session.scalar(select(func.count()).select_from(ResourceRelease))
+        batch_count = await session.scalar(select(func.count()).select_from(ReleaseBatch))
+        job_count = await session.scalar(select(func.count()).select_from(NotificationJob))
+    assert release_count == 1
+    assert batch_count == 0
+    assert job_count == 0
 
 
 async def test_restart_closes_batch_and_enqueues_filtered_group_job(
     sessions: async_sessionmaker[AsyncSession],
 ) -> None:
     _, group_id = await _seed_target(sessions)
+    release_pub_date = NOW + timedelta(minutes=4)
     first = MikanReleasePipeline(
         sessions=sessions,
-        client=FakeMikanClient([_feed()]),
+        client=FakeMikanClient(
+            [
+                MikanFeedResult(items=(), etag='"baseline"', last_modified=None),
+                _feed(guid="fresh-release", pub_date=release_pub_date),
+            ]
+        ),
         outbox=OutboxRepository(sessions),
     )
     await first.run_once(NOW)
+    await first.run_once(NOW + timedelta(minutes=5))
 
     restarted = MikanReleasePipeline(
         sessions=sessions,
         client=FakeMikanClient([_feed(not_modified=True)]),
         outbox=OutboxRepository(sessions),
     )
-    result = await restarted.run_once(NOW + timedelta(minutes=10))
+    result = await restarted.run_once(NOW + timedelta(minutes=15))
 
     assert result.batches_closed == 1
     async with sessions() as session:
@@ -239,9 +326,9 @@ async def test_restart_closes_batch_and_enqueues_filtered_group_job(
     assert job.chat_group_id == group_id
     assert job.business_key == f"mikan/{batch.id}"
     assert job.payload["at_user_ids"] == ["u-chs"]
-    assert "release-1" in str(job.payload["text"])
-    assert NOW.isoformat() in str(job.payload["text"])
-    assert job.expires_at == NOW + timedelta(hours=24)
+    assert "fresh-release" in str(job.payload["text"])
+    assert release_pub_date.isoformat() in str(job.payload["text"])
+    assert job.expires_at == release_pub_date + timedelta(hours=24)
 
 
 async def test_batch_older_than_24_hours_is_suppressed(
@@ -250,17 +337,23 @@ async def test_batch_older_than_24_hours_is_suppressed(
     await _seed_target(sessions)
     first = MikanReleasePipeline(
         sessions=sessions,
-        client=FakeMikanClient([_feed()]),
+        client=FakeMikanClient(
+            [
+                MikanFeedResult(items=(), etag='"baseline"', last_modified=None),
+                _feed(guid="fresh-release", pub_date=NOW + timedelta(minutes=5)),
+            ]
+        ),
         outbox=OutboxRepository(sessions),
     )
     await first.run_once(NOW)
+    await first.run_once(NOW + timedelta(minutes=5))
 
     restarted = MikanReleasePipeline(
         sessions=sessions,
         client=FakeMikanClient([_feed(not_modified=True)]),
         outbox=OutboxRepository(sessions),
     )
-    result = await restarted.run_once(NOW + timedelta(hours=25))
+    result = await restarted.run_once(NOW + timedelta(hours=25, minutes=5))
 
     assert result.batches_closed == 1
     async with sessions() as session:
