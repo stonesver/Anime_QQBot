@@ -63,5 +63,17 @@
     "type": "int",
     "default": 3,
     "description": "同一群每十分钟最多主动提醒次数。"
+  },
+  "proactive_action_links_enabled": {
+    "type": "bool",
+    "default": false,
+    "description": "允许在主动通知底部发送经过来源与格式校验的单个动作链接。默认关闭。"
+  },
+  "proactive_action_link_sources": {
+    "type": "list",
+    "default": [
+      "bilibili"
+    ],
+    "description": "主动动作链接来源白名单。当前仅支持 bilibili 规范视频页。"
   }
 }

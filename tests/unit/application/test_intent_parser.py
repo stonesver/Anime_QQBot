@@ -116,6 +116,37 @@ def test_detail_with_keyword_uses_query() -> None:
     assert intent.anime_id is None
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        "/番剧 资源详情 BanG Dream! YUME∞MITA 6",
+        "资源详情 BanG Dream! YUME∞MITA 6",
+    ],
+)
+def test_resource_detail_parses_keyword_and_episode(content: str) -> None:
+    intent = parse_fixed_command(content)
+
+    assert isinstance(intent, Intent)
+    assert intent.kind == IntentKind.RESOURCE_DETAIL
+    assert intent.query == "BanG Dream! YUME∞MITA"
+    assert intent.episode_label == "6"
+
+
+def test_resource_detail_allows_query_without_episode() -> None:
+    intent = parse_fixed_command("资源详情 夏日物语")
+
+    assert isinstance(intent, Intent)
+    assert intent.kind == IntentKind.RESOURCE_DETAIL
+    assert intent.query == "夏日物语"
+    assert intent.episode_label is None
+
+
+def test_resource_detail_requires_keyword() -> None:
+    result = parse_fixed_command("资源详情")
+
+    assert isinstance(result, ParseFailure)
+
+
 def test_subscribe_requires_confirmation() -> None:
     intent = parse_fixed_command(f"/番剧 订阅 {_INTERNAL_ID}")
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from anime_qqbot.resources.presentation import format_release_notification
 
 from .adapter import Reply
 
@@ -103,8 +106,17 @@ def render_airing_notification(payload: dict[str, Any]) -> Any:
     return _message_chain(chain)
 
 
-def render_release_batch(payload: dict[str, Any]) -> Any:
-    text = payload.get("text", "")
+def render_release_batch(
+    payload: dict[str, Any],
+    *,
+    proactive_action_links_enabled: bool = False,
+    proactive_action_link_sources: Iterable[str] = ("bilibili",),
+) -> Any:
+    text = format_release_notification(
+        payload,
+        proactive_action_links_enabled=proactive_action_links_enabled,
+        proactive_action_link_sources=proactive_action_link_sources,
+    )
     user_ids = payload.get("at_user_ids") or []
     chain: list[Any] = []
     for user_id in user_ids:

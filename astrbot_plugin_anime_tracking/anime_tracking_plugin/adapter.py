@@ -21,7 +21,7 @@ into one of:
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -36,12 +36,14 @@ from anime_qqbot.application import (
     IntentKind,
     ParseFailure,
     QueryResult,
+    ResourceDetailResult,
     SubscribeResult,
     detail_for,
     my_subscriptions,
     next_airing_for,
     parse_fixed_command,
     pending_mappings,
+    resource_details,
     search_anime,
     season_listing,
     source_freshness,
@@ -55,6 +57,7 @@ from anime_qqbot.interactions.models import CandidateItem, InteractionScope
 from anime_qqbot.interactions.repository import InteractionSessionRepository
 from anime_qqbot.presentation.models import CardScene
 from anime_qqbot.presentation.text import format_listing
+from anime_qqbot.resources.presentation import format_resource_detail
 
 # ---------------------------------------------------------------------------
 # Platform-neutral reply types
@@ -132,6 +135,8 @@ def help_reply() -> Reply:
                     "/番剧 季度 [年份] [冬|春|夏|秋]\n"
                     "/番剧 搜索 <关键词>\n"
                     "/番剧 详情 <内部ID|关键词>\n"
+                    "/番剧 资源详情 <关键词> [集数]\n"
+                    "资源详情 <关键词> [集数]\n"
                     "/番剧 下次 <内部ID|关键词>\n"
                     "/番剧 订阅 <内部ID|关键词>\n"
                     "/番剧 取消订阅 <内部ID|关键词>\n"
@@ -244,6 +249,30 @@ async def _subscribe_to_reply(result: SubscribeResult) -> Reply:
         return Reply.from_text(result.detail_message)
     title = result.anime.display_title or str(result.anime.id)
     return Reply.from_text(f"{result.detail_message}\n{title}")
+
+
+def _resource_detail_to_reply(result: ResourceDetailResult) -> Reply:
+    if result.candidates:
+        lines = ["匹配到多个番剧，请使用完整标题重新查询："]
+        lines.extend(
+            f"{index}. {row.display_title or '未命名番剧'}"
+            for index, row in enumerate(result.candidates, start=1)
+        )
+        return Reply.from_text("\n".join(lines))
+    if result.anime is None:
+        return Reply.from_text("找不到对应番剧")
+    title = result.anime.display_title or "该番剧"
+    if not result.summaries:
+        episode = f"第 {result.episode_label} 集" if result.episode_label is not None else "最近"
+        return Reply.from_text(f"{title} 暂无{episode}资源")
+    return Reply.from_text(
+        format_resource_detail(
+            display_title=title,
+            episode_label=result.episode_label,
+            summaries=result.summaries,
+            page_url=result.page_url,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -398,10 +427,11 @@ class EventAdapter:
         candidate = session.candidate(intent.selection_number or 0)
         if candidate is None:
             return Reply.from_error("编号不在当前候选范围内")
-        return Intent(
-            kind=intent.kind,
+        return replace(
+            intent,
             anime_id=str(candidate.anime_id),
-            raw=intent.raw,
+            query=None,
+            selection_number=None,
         )
 
     async def _record_group_event(
@@ -506,6 +536,18 @@ class EventAdapter:
                 ctx=ctx,
             )
 
+        async def _resource_detail(ctx: ChatContext, intent: Intent) -> Reply:
+            if s is None:
+                return await _no_db()
+            return _resource_detail_to_reply(
+                await resource_details(
+                    s,
+                    anime_id=intent.anime_id,
+                    query=intent.query,
+                    episode_label=intent.episode_label,
+                )
+            )
+
         async def _my(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
@@ -542,6 +584,7 @@ class EventAdapter:
             IntentKind.SEASON: _season,
             IntentKind.SEARCH: _search,
             IntentKind.DETAIL: _detail,
+            IntentKind.RESOURCE_DETAIL: _resource_detail,
             IntentKind.NEXT: _next,
             IntentKind.MY_SUBSCRIPTIONS: _my,
             IntentKind.SUBSCRIBE: _subscribe,

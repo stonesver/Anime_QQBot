@@ -326,8 +326,22 @@ async def test_restart_closes_batch_and_enqueues_filtered_group_job(
     assert job.chat_group_id == group_id
     assert job.business_key == f"mikan/{batch.id}"
     assert job.payload["at_user_ids"] == ["u-chs"]
-    assert "fresh-release" in str(job.payload["text"])
-    assert release_pub_date.isoformat() in str(job.payload["text"])
+    assert "text" not in job.payload
+    assert job.payload["display_title"] == "Example Anime"
+    assert job.payload["episode_label"] == "01"
+    assert job.payload["release_count"] == 1
+    assert job.payload["detail_query"] == "Example Anime"
+    assert job.payload["releases"] == [
+        {
+            "subtitle_group": "Group A",
+            "language": "chs",
+            "resolution": "1080p",
+            "pub_date": release_pub_date.isoformat(),
+        }
+    ]
+    assert "http://" not in str(job.payload)
+    assert "https://" not in str(job.payload)
+    assert "fresh-release" not in str(job.payload)
     assert job.expires_at == release_pub_date + timedelta(hours=24)
 
 

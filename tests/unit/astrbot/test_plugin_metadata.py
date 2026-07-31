@@ -36,6 +36,13 @@ def test_conf_schema_exposes_only_non_secret_keys() -> None:
     assert all("secret" not in key for key in schema)
 
 
+def test_proactive_action_links_are_safely_disabled_by_default() -> None:
+    schema = json.loads((PLUGIN_DIR / "_conf_schema.json").read_text())
+
+    assert schema["proactive_action_links_enabled"]["default"] is False
+    assert schema["proactive_action_link_sources"]["default"] == ["bilibili"]
+
+
 def test_plugin_directory_compiles_without_syntax_errors() -> None:
     import compileall
 

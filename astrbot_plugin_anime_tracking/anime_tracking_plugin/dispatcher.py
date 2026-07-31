@@ -261,7 +261,25 @@ class OutboxDispatcher:
         if job_type == "airing":
             return render_airing_notification(payload)
         if job_type == "release":
-            return render_release_batch(payload)
+            configured_sources = self._lifecycle.config.get(
+                "proactive_action_link_sources",
+                ["bilibili"],
+            )
+            if isinstance(configured_sources, str):
+                sources = [
+                    value.strip() for value in configured_sources.split(",") if value.strip()
+                ]
+            elif isinstance(configured_sources, (list, tuple, set)):
+                sources = configured_sources
+            else:
+                sources = []
+            return render_release_batch(
+                payload,
+                proactive_action_links_enabled=bool(
+                    self._lifecycle.config.get("proactive_action_links_enabled", False)
+                ),
+                proactive_action_link_sources=sources,
+            )
         return render_release_batch({"text": f"[{job_type}] {payload}"})
 
     async def _send_message(self, umo: str, chain: Any) -> None:
