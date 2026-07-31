@@ -42,9 +42,15 @@ from anime_qqbot.persistence.models.notifications_v2 import (
     DeliveryAttempt,
     NotificationJob,
 )
+from anime_qqbot.persistence.models.resources import ResourceRelease
 from anime_qqbot.persistence.models.subscriptions_v2 import (
     FollowSubscription,
     SubscriptionResourceFilter,
+)
+from anime_qqbot.resources.presentation import (
+    is_safe_mikan_page_url,
+    normalize_episode_label,
+    release_summary_from_model,
 )
 from anime_qqbot.subscriptions.repository_v2 import (
     FollowRepository,
@@ -72,6 +78,17 @@ class SubscribeResult:
     success: bool
     anime: AnimeRow | None = None
     detail_message: str = ""
+
+
+@dataclass(frozen=True)
+class ResourceDetailResult:
+    """Persisted release details returned only after an explicit user query."""
+
+    anime: AnimeRow | None = None
+    candidates: tuple[AnimeRow, ...] = ()
+    episode_label: str | None = None
+    summaries: tuple[dict[str, object], ...] = ()
+    page_url: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +326,75 @@ async def detail_for(
     if anime.nsfw_flag == "true":
         return QueryResult(kind=IntentKind.DETAIL, blocked=True)
     return QueryResult(kind=IntentKind.DETAIL, detail=anime)
+
+
+async def resource_details(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    anime_id: str | None,
+    query: str | None,
+    episode_label: str | None,
+) -> ResourceDetailResult:
+    repo = CatalogReadRepository(sessions)
+    anime: AnimeRow | None = None
+    if anime_id:
+        try:
+            anime = await repo.find_anime_by_id(UUID(anime_id))
+        except ValueError:
+            anime = None
+    elif query:
+        matches = tuple(await repo.search_anime_by_title(query))
+        exact = tuple(
+            row
+            for row in matches
+            if (row.display_title or "").casefold() == query.strip().casefold()
+        )
+        if len(exact) == 1:
+            anime = exact[0]
+        elif len(matches) == 1:
+            anime = matches[0]
+        elif len(matches) > 1:
+            return ResourceDetailResult(
+                candidates=matches,
+                episode_label=episode_label,
+            )
+    if anime is None or anime.nsfw_flag == "true" or anime.disabled:
+        return ResourceDetailResult(episode_label=episode_label)
+
+    async with sessions() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(ResourceRelease)
+                    .where(ResourceRelease.anime_id == anime.id)
+                    .order_by(ResourceRelease.pub_date.desc(), ResourceRelease.id.desc())
+                    .limit(50)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    if episode_label is not None:
+        wanted_episode = normalize_episode_label(episode_label)
+        rows = [
+            release
+            for release in rows
+            if normalize_episode_label(release.episode_label) == wanted_episode
+        ]
+    safe_page_url = next(
+        (
+            release.page_url
+            for release in rows
+            if release.page_url and is_safe_mikan_page_url(release.page_url)
+        ),
+        None,
+    )
+    return ResourceDetailResult(
+        anime=anime,
+        episode_label=episode_label,
+        summaries=tuple(release_summary_from_model(release) for release in rows),
+        page_url=safe_page_url,
+    )
 
 
 async def next_airing_for(

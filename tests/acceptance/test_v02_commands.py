@@ -14,6 +14,8 @@ def test_all_fixed_commands_in_parser() -> None:
         "/番剧 季度 夏",
         "/番剧 搜索 test",
         "/番剧 详情 aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
+        "/番剧 资源详情 test 1",
+        "资源详情 test 1",
         "/番剧 下次 aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
         "/番剧 订阅 aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",
         "/番剧 取消订阅 aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeee1",

@@ -121,7 +121,8 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
         Slash commands remain owned by the command-group decorators so one
         incoming message can never receive duplicate replies.
         """
-        if str(getattr(event, "message_str", "")).strip().startswith("/番剧"):
+        message = str(getattr(event, "message_str", "")).strip()
+        if message.startswith("/番剧") or message.startswith("资源详情"):
             return
         lifecycle = await self._ensure_lifecycle()
         result = await InteractionGateway(lifecycle).route(from_astrbot_event(event))
@@ -158,6 +159,17 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
 
     @_group_route.command("详情")  # type: ignore[union-attr]
     async def _handle_detail(self, event: AstrMessageEvent) -> MessageEventResult:
+        yield await self._dispatch_result(event)
+
+    @_group_route.command("资源详情")  # type: ignore[union-attr]
+    async def _handle_resource_detail(self, event: AstrMessageEvent) -> MessageEventResult:
+        yield await self._dispatch_result(event)
+
+    @filter.command("资源详情")  # type: ignore[misc]
+    async def _handle_resource_detail_direct(
+        self,
+        event: AstrMessageEvent,
+    ) -> MessageEventResult:
         yield await self._dispatch_result(event)
 
     @_group_route.command("下次")  # type: ignore[union-attr]

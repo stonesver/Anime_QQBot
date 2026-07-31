@@ -38,6 +38,7 @@ _SEASON_NAMES: dict[str, str] = {
 _DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 _YEAR_RE = re.compile(r"^(\d{4})$")
 _INTERNAL_ID_RE = re.compile(r"^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$")
+_EPISODE_ARGUMENT_RE = re.compile(r"^(?:第)?(\d{1,3})(?:集)?$")
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,8 @@ def parse_fixed_command(content: str) -> Intent | ParseFailure:
         body = raw[len("/番剧") :].strip()
     elif raw.startswith("番剧"):
         body = raw[len("番剧") :].strip()
+    elif raw.startswith("资源详情"):
+        body = raw
     else:
         return ParseFailure("not a fixed command")
 
@@ -108,6 +111,27 @@ def parse_fixed_command(content: str) -> Intent | ParseFailure:
             kind=IntentKind.DETAIL,
             query=None if is_internal_id(tail) else tail,
             anime_id=tail if is_internal_id(tail) else None,
+            raw=raw,
+        )
+
+    if head == "资源详情":
+        if not rest:
+            return ParseFailure("资源详情 需要番剧关键词")
+        query_parts = rest
+        episode_label = None
+        if len(rest) >= 2:
+            episode_match = _EPISODE_ARGUMENT_RE.fullmatch(rest[-1])
+            if episode_match is not None:
+                query_parts = rest[:-1]
+                episode_label = episode_match.group(1)
+        query = " ".join(query_parts).strip()
+        if not query:
+            return ParseFailure("资源详情 需要番剧关键词")
+        return Intent(
+            kind=IntentKind.RESOURCE_DETAIL,
+            query=None if is_internal_id(query) else query,
+            anime_id=query if is_internal_id(query) else None,
+            episode_label=episode_label,
             raw=raw,
         )
 

@@ -29,6 +29,7 @@ from anime_qqbot.persistence.models.subscriptions_v2 import (
 from anime_qqbot.resources.adapters.mikan import MikanFeedResult, MikanItem
 from anime_qqbot.resources.batching import BatchManager
 from anime_qqbot.resources.parser import parse_release_title
+from anime_qqbot.resources.presentation import build_release_notification_payload
 
 logger = logging.getLogger(__name__)
 
@@ -417,12 +418,11 @@ class MikanReleasePipeline:
                 business_key=f"mikan/{batch_id}",
                 payload={
                     "anime_id": str(batch.anime_id),
-                    "episode_label": batch.episode_label,
-                    "at_user_ids": sorted(user_ids),
-                    "text": _format_message(
-                        anime.display_title if anime is not None else None,
-                        batch.episode_label,
-                        selected,
+                    **build_release_notification_payload(
+                        display_title=anime.display_title if anime is not None else None,
+                        episode_label=batch.episode_label,
+                        user_ids=sorted(user_ids),
+                        releases=selected,
                     ),
                 },
                 available_at=now,
@@ -457,28 +457,6 @@ def _fingerprint(item: MikanItem) -> str:
 
 def _is_notification_fresh(pub_date: datetime, now: datetime) -> bool:
     return now - timedelta(hours=24) < pub_date <= now
-
-
-def _format_message(
-    display_title: str | None,
-    episode_label: str,
-    releases: list[ResourceRelease],
-) -> str:
-    lines = [f"[资源发布] {display_title or '未知番剧'} 第{episode_label}集"]
-    for index, release in enumerate(releases[:5], start=1):
-        details = [
-            *release.subtitle_groups,
-            release.language or "语言未知",
-            *(release.resolutions or ["分辨率未知"]),
-        ]
-        lines.append(f"{index}. {release.raw_title}")
-        lines.append(f"   {' / '.join(details)}")
-        lines.append(f"   发布时间：{release.pub_date.isoformat()}")
-        if release.page_url:
-            lines.append(f"   {release.page_url}")
-    if len(releases) > 5:
-        lines.append(f"……另有 {len(releases) - 5} 条资源")
-    return "\n".join(lines)
 
 
 __all__ = ["MikanFeedClient", "MikanReleasePipeline", "PollSummary"]

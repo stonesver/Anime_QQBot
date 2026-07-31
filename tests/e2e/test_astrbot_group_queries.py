@@ -464,6 +464,81 @@ async def test_real_multi_candidate_returns_two_rows(async_engine: AsyncEngine) 
 
 
 @pytest.mark.asyncio
+async def test_real_resource_detail_returns_brief_sources_and_one_safe_page_link(
+    async_engine: AsyncEngine,
+) -> None:
+    from anime_qqbot.persistence.models.resources import ResourceRelease
+
+    await _insert_anime(
+        async_engine,
+        anime_id=SAMPLE_ANIME_ID,
+        title="BanG Dream! YUME∞MITA",
+        nsfw="false",
+    )
+    factory = _sessions_for(async_engine)
+    published_at = datetime(2026, 7, 23, 22, 0, tzinfo=UTC)
+    async with factory() as session, session.begin():
+        session.add_all(
+            [
+                ResourceRelease(
+                    id=uuid4(),
+                    mikan_item_id="release-detail-1",
+                    content_fingerprint="fingerprint-detail-1",
+                    raw_title="[ANi] very long raw title",
+                    pub_date=published_at,
+                    page_url="https://mikanime.tv/Home/Episode/release-detail-1",
+                    episode_label="06",
+                    subtitle_groups=["ANi", "Baha", "CHT"],
+                    language="cht",
+                    resolutions=["1080p"],
+                    anime_id=SAMPLE_ANIME_ID,
+                    mikan_entry_id=None,
+                    parser_version="v2",
+                    status="batched",
+                    discovered_at=published_at,
+                ),
+                ResourceRelease(
+                    id=uuid4(),
+                    mikan_item_id="release-detail-2",
+                    content_fingerprint="fingerprint-detail-2",
+                    raw_title="[Prejudice-Studio] another long raw title",
+                    pub_date=published_at + timedelta(minutes=30),
+                    page_url="https://mikanime.tv/Home/Episode/release-detail-2",
+                    episode_label="6",
+                    subtitle_groups=["Prejudice-Studio", "VideoVer"],
+                    language="chs",
+                    resolutions=["1080p"],
+                    anime_id=SAMPLE_ANIME_ID,
+                    mikan_entry_id=None,
+                    parser_version="v2",
+                    status="batched",
+                    discovered_at=published_at,
+                ),
+            ]
+        )
+
+    adapter = EventAdapter(sessions=factory)
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin="umo:100",
+        content="资源详情 BanG Dream! YUME∞MITA 6",
+    )
+
+    assert reply.kind == "text"
+    text = reply.blocks[0].text
+    assert "BanG Dream! YUME∞MITA · 第 6 集" in text
+    assert "• Prejudice-Studio · 简中 · 1080p · 07-24 06:30" in text
+    assert "• ANi · 繁中 · 1080p · 07-24 06:00" in text
+    assert "very long raw title" not in text
+    assert text.count("https://") == 1
+    assert "https://mikanime.tv/Home/Episode/release-detail-2" in text
+    assert "release-detail-1" not in text
+
+
+@pytest.mark.asyncio
 async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> None:
     from anime_qqbot.persistence.models.catalog import (
         AiringOccurrenceRow,

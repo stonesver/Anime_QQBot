@@ -127,6 +127,15 @@ ssh -p 2222 \
 2. `send_governor_enabled=true`：启用查询和主动提醒的统一限频。
 3. `admin_page_writes_enabled=true`：确认管理页只经 SSH 隧道访问后，允许写操作。
 
+资源主动通知默认不带 Mikan 链接。用户发送
+`资源详情 <番剧关键词> [集数]` 或 `/番剧 资源详情 <番剧关键词> [集数]` 时，
+机器人只读取已持久化资源并最多返回一个 Mikan 页面链接。
+
+`proactive_action_links_enabled` 默认保持 `false`。未来接入 B 站 UP 主视频后，如需
+灰度开启动作链接，来源白名单 `proactive_action_link_sources` 只保留 `bilibili`；
+系统仅接受 `https://www.bilibili.com/video/BV...` 规范视频页，每条通知最多一个。
+Mikan 通知不使用该动作位。
+
 打开插件详情中的“番剧放送控制台”即可进入管理页。页面通过 AstrBot Dashboard
 认证和 Plugin Page bridge 工作，不需要 Nginx。机器人设置权限只认 AstrBot 事件
 角色 `admin`；QQ 群主和群管理员没有额外权限。

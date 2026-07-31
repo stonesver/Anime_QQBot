@@ -23,6 +23,7 @@ class IntentKind(StrEnum):
     SEASON = "season"
     SEARCH = "search"
     DETAIL = "detail"
+    RESOURCE_DETAIL = "resource_detail"
     NEXT = "next"
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
@@ -52,6 +53,7 @@ class Intent:
     language: str | None = None
     subtitle_groups: tuple[str, ...] = ()
     resolutions: tuple[str, ...] = ()
+    episode_label: str | None = None
     selection_number: int | None = None
     requires_confirmation: bool = False
     raw: str = ""
@@ -73,6 +75,7 @@ class Intent:
             "language": self.language,
             "subtitle_groups": list(self.subtitle_groups),
             "resolutions": list(self.resolutions),
+            "episode_label": self.episode_label,
             "selection_number": self.selection_number,
             "requires_confirmation": self.requires_confirmation,
             "raw": self.raw,

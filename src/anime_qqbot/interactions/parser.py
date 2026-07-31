@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from anime_qqbot.application.intents import Intent, IntentKind
-from anime_qqbot.application.parser import ParseFailure
+from anime_qqbot.application.parser import ParseFailure, parse_fixed_command
 
 _DIRECT_EXACT: dict[str, IntentKind] = {
     "今日番剧": IntentKind.TODAY,
@@ -38,6 +38,8 @@ _NUMBER_RE = re.compile(r"^([1-9]\d?)$")
 
 def parse_direct_shortcut(content: str) -> Intent | ParseFailure:
     raw = _normalize(content)
+    if raw.startswith("资源详情"):
+        return parse_fixed_command(raw)
     kind = _DIRECT_EXACT.get(raw)
     if kind is not None:
         return Intent(kind=kind, raw=content)

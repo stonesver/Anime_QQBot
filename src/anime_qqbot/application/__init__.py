@@ -9,6 +9,7 @@ from anime_qqbot.application.module import (
 )
 from anime_qqbot.application.use_cases import (
     QueryResult,
+    ResourceDetailResult,
     SubscribeResult,
     claim_pending_job,
     claim_pending_jobs,
@@ -18,6 +19,7 @@ from anime_qqbot.application.use_cases import (
     next_airing_for,
     pending_mappings,
     release_expired_leases,
+    resource_details,
     search_anime,
     season_listing,
     source_freshness,
@@ -34,6 +36,7 @@ __all__ = [
     "IntentKind",
     "ParseFailure",
     "QueryResult",
+    "ResourceDetailResult",
     "SubscribeResult",
     "claim_pending_job",
     "claim_pending_jobs",
@@ -45,6 +48,7 @@ __all__ = [
     "parse_fixed_command",
     "pending_mappings",
     "release_expired_leases",
+    "resource_details",
     "search_anime",
     "season_listing",
     "source_freshness",
