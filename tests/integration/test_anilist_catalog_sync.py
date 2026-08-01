@@ -107,6 +107,7 @@ async def test_sync_subject_creates_external_entry_and_snapshot(session_factory)
     assert snap.payload["release_year"] == 2026
     assert snap.payload["season_name"] == "夏"
     assert snap.payload["media_format"] == "TV"
+    assert snap.payload["status"] is None
 
 
 @pytest.mark.asyncio

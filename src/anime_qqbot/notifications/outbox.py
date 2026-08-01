@@ -135,6 +135,55 @@ class OutboxRepository:
                 for r in rows
             ]
 
+    async def add_airing_audience(
+        self,
+        *,
+        chat_group_id: UUID,
+        anime_id: UUID,
+        external_user_id: str,
+        now: datetime,
+    ) -> bool:
+        """Add a late subscriber to the next still-pending airing job.
+
+        The row lock makes repeated subscription requests and a concurrent
+        worker claim safe. Only a future pending job is eligible; once a job
+        is due or leased, its audience is intentionally frozen.
+        """
+
+        async with self._session_factory() as session:
+            stmt = (
+                select(NotificationJob)
+                .where(
+                    NotificationJob.chat_group_id == chat_group_id,
+                    NotificationJob.job_type == "airing",
+                    NotificationJob.business_key.like(f"airing/{anime_id}/%"),
+                    NotificationJob.status == "pending",
+                    NotificationJob.available_at > now,
+                    NotificationJob.expires_at > now,
+                )
+                .order_by(NotificationJob.available_at.asc())
+                .limit(1)
+                .with_for_update()
+            )
+            job = (await session.execute(stmt)).scalar_one_or_none()
+            if job is None:
+                return False
+            payload = dict(job.payload)
+            raw_ids = payload.get("at_user_ids")
+            user_ids = (
+                {value for value in raw_ids if isinstance(value, str)}
+                if isinstance(raw_ids, list)
+                else set()
+            )
+            if external_user_id in user_ids:
+                return False
+            user_ids.add(external_user_id)
+            payload["at_user_ids"] = sorted(user_ids)
+            job.payload = payload
+            job.updated_at = now
+            await session.commit()
+            return True
+
     async def complete(
         self, job_id: UUID, result: str, response_summary: str | None = None
     ) -> None:

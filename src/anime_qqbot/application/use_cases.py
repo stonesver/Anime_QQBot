@@ -24,6 +24,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from anime_qqbot.application.context import ChatContext
 from anime_qqbot.application.enrichment import BackgroundEnrichmentQueue
 from anime_qqbot.application.intents import Intent, IntentKind
+from anime_qqbot.application.subscription_state import (
+    SubscriptionOccurrence,
+    SubscriptionState,
+    SubscriptionStateKind,
+    classify_subscription,
+)
 from anime_qqbot.catalog.repository_v2 import (
     AnimeRow,
     CatalogReadRepository,
@@ -32,11 +38,13 @@ from anime_qqbot.groups.repository_v2 import (
     ChatGroupRepository,
     GroupEvent,
 )
+from anime_qqbot.notifications.outbox import OutboxRepository
 from anime_qqbot.persistence.models.catalog import (
     AiringOccurrenceRow,
     Anime,
     AnimeSourceLink,
     ExternalEntry,
+    SourceSnapshot,
 )
 from anime_qqbot.persistence.models.notifications_v2 import (
     DeliveryAttempt,
@@ -78,6 +86,7 @@ class SubscribeResult:
     success: bool
     anime: AnimeRow | None = None
     detail_message: str = ""
+    informational: bool = False
 
 
 @dataclass(frozen=True)
@@ -98,6 +107,129 @@ class ResourceDetailResult:
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True)
+class _SubscriptionCatalogFacts:
+    next_occurrence: SubscriptionOccurrence | None
+    latest_episode: int | None
+    total_episodes: int | None
+    source_statuses: tuple[str, ...]
+
+
+def _episode_number(label: str) -> int | None:
+    try:
+        value = int(label)
+    except (TypeError, ValueError):
+        return None
+    return value if value >= 0 else None
+
+
+async def _subscription_catalog_facts(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    anime_id: UUID,
+    now: datetime,
+    timezone: ZoneInfo,
+) -> _SubscriptionCatalogFacts:
+    async with sessions() as session:
+        occurrences = (
+            (
+                await session.execute(
+                    select(AiringOccurrenceRow)
+                    .where(AiringOccurrenceRow.anime_id == anime_id)
+                    .order_by(AiringOccurrenceRow.air_date, AiringOccurrenceRow.air_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        source_rows = (
+            await session.execute(
+                select(ExternalEntry.provider, SourceSnapshot)
+                .join(
+                    AnimeSourceLink,
+                    AnimeSourceLink.external_entry_id == ExternalEntry.id,
+                )
+                .join(
+                    SourceSnapshot,
+                    SourceSnapshot.external_entry_id == ExternalEntry.id,
+                )
+                .where(AnimeSourceLink.anime_id == anime_id)
+                .where(AnimeSourceLink.status == "confirmed")
+                .where(ExternalEntry.disabled.is_(False))
+                .where(ExternalEntry.provider.in_(("bangumi", "anilist")))
+                .order_by(ExternalEntry.provider, SourceSnapshot.version.desc())
+            )
+        ).all()
+
+    next_row = next(
+        (row for row in occurrences if row.air_at is not None and row.air_at >= now),
+        None,
+    )
+    local_today = now.astimezone(timezone).date()
+    latest_episode = max(
+        (
+            episode
+            for row in occurrences
+            if (
+                (row.air_at is not None and row.air_at < now)
+                or (row.air_at is None and row.air_date < local_today)
+            )
+            for episode in (_episode_number(row.episode_label),)
+            if episode is not None
+        ),
+        default=None,
+    )
+
+    snapshots: dict[str, SourceSnapshot] = {}
+    for provider, snapshot in source_rows:
+        snapshots.setdefault(str(provider), snapshot)
+    total_episodes = max(
+        (
+            int(snapshot.payload["total_episodes"])
+            for snapshot in snapshots.values()
+            if isinstance(snapshot.payload.get("total_episodes"), int)
+            and snapshot.payload["total_episodes"] > 0
+        ),
+        default=None,
+    )
+    statuses = tuple(
+        status
+        for snapshot in snapshots.values()
+        for status in (snapshot.payload.get("status"),)
+        if isinstance(status, str) and status.strip()
+    )
+    return _SubscriptionCatalogFacts(
+        next_occurrence=(
+            SubscriptionOccurrence(
+                episode_label=next_row.episode_label,
+                air_at=next_row.air_at,
+            )
+            if next_row is not None and next_row.air_at is not None
+            else None
+        ),
+        latest_episode=latest_episode,
+        total_episodes=total_episodes,
+        source_statuses=statuses,
+    )
+
+
+def _subscription_detail_message(
+    *,
+    state: SubscriptionState,
+    timezone: ZoneInfo,
+) -> str:
+    latest = (
+        f"当前已播至第 {state.latest_episode} 集"
+        if state.latest_episode is not None
+        else "当前播出进度暂未同步"
+    )
+    if state.kind is SubscriptionStateKind.ACTIVE and state.next_occurrence is not None:
+        local_at = state.next_occurrence.air_at.astimezone(timezone)
+        episode = state.next_occurrence.episode_label.lstrip("0") or "0"
+        return f"已订阅\n{latest}，下一集为第 {episode} 集，预计 {local_at:%m-%d %H:%M}。"
+    return f"已订阅\n{latest}，下一集时间暂未同步，后续同步到新播出时间后提醒。"
 
 
 async def _resolve_anime(
@@ -122,6 +254,13 @@ async def _resolve_anime(
     if not query:
         return None
     matches = [row for row in await repo.search_anime_by_title(query) if row.nsfw_flag != "true"]
+    exact = [
+        row
+        for row in matches
+        if (row.display_title or "").strip().casefold() == query.strip().casefold()
+    ]
+    if len(exact) == 1:
+        return exact[0]
     if len(matches) == 1:
         return matches[0]
     return None
@@ -504,24 +643,69 @@ async def subscribe(
         return SubscribeResult(success=False, detail_message="该番剧被屏蔽")
     if anime.disabled:
         return SubscribeResult(success=False, detail_message="该番剧已禁用")
+    now = _now_utc()
+    facts = await _subscription_catalog_facts(
+        sessions,
+        anime_id=anime.id,
+        now=now,
+        timezone=ctx.timezone,
+    )
+    state = classify_subscription(
+        next_occurrence=facts.next_occurrence,
+        latest_episode=facts.latest_episode,
+        total_episodes=facts.total_episodes,
+        source_statuses=facts.source_statuses,
+    )
     chat_group_id = await _resolve_chat_group_id(sessions, ctx)
     follow = FollowRepository(sessions)
+    if state.kind is SubscriptionStateKind.COMPLETED:
+        await follow.unsubscribe(
+            chat_group_id=chat_group_id,
+            external_user_id=ctx.user_id,
+            anime_id=anime.id,
+        )
+        title = anime.display_title or "该番剧"
+        return SubscribeResult(
+            success=False,
+            anime=anime,
+            detail_message=f"{title} 已完结，无需订阅，不会发送开播或资源提醒。",
+            informational=True,
+        )
     await follow.subscribe(
         chat_group_id=chat_group_id,
         external_user_id=ctx.user_id,
         anime_id=anime.id,
     )
     try:
+        await OutboxRepository(sessions).add_airing_audience(
+            chat_group_id=chat_group_id,
+            anime_id=anime.id,
+            external_user_id=ctx.user_id,
+            now=now,
+        )
+    except Exception as exc:
+        logger.warning(
+            "application.subscription.airing_audience_update_failed",
+            extra={"anime_id": str(anime.id), "error": str(exc)},
+        )
+    try:
         await BackgroundEnrichmentQueue(sessions).request_subscription(
             anime.id,
-            now=_now_utc(),
+            now=now,
         )
     except Exception as exc:
         logger.warning(
             "application.enrichment.subscription_enqueue_failed",
             extra={"anime_id": str(anime.id), "error": str(exc)},
         )
-    return SubscribeResult(success=True, anime=anime, detail_message="已订阅")
+    return SubscribeResult(
+        success=True,
+        anime=anime,
+        detail_message=_subscription_detail_message(
+            state=state,
+            timezone=ctx.timezone,
+        ),
+    )
 
 
 async def unsubscribe(

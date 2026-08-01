@@ -71,6 +71,7 @@ class AniListSyncService:
                 "release_year": detail.release_year,
                 "season_name": detail.season_name,
                 "media_format": detail.media_format,
+                "status": detail.status,
             },
             source_time=self._clock.now(),
             fetched_at=self._clock.now(),

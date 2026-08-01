@@ -14,8 +14,15 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from anime_qqbot.application.subscription_state import SubscriptionStateKind, classify_subscription
 from anime_qqbot.notifications.outbox import OutboxRepository
-from anime_qqbot.persistence.models.catalog import Anime, AnimeSourceLink, ExternalEntry
+from anime_qqbot.persistence.models.catalog import (
+    AiringOccurrenceRow,
+    Anime,
+    AnimeSourceLink,
+    ExternalEntry,
+    SourceSnapshot,
+)
 from anime_qqbot.persistence.models.resources import (
     MikanFeedState,
     ReleaseBatch,
@@ -32,6 +39,73 @@ from anime_qqbot.resources.parser import parse_release_title
 from anime_qqbot.resources.presentation import build_release_notification_payload
 
 logger = logging.getLogger(__name__)
+
+
+async def _is_completed_anime(
+    session: AsyncSession,
+    *,
+    anime_id: UUID,
+    now: datetime,
+) -> bool:
+    source_rows = (
+        await session.execute(
+            select(ExternalEntry.provider, SourceSnapshot)
+            .join(AnimeSourceLink, AnimeSourceLink.external_entry_id == ExternalEntry.id)
+            .join(SourceSnapshot, SourceSnapshot.external_entry_id == ExternalEntry.id)
+            .where(AnimeSourceLink.anime_id == anime_id)
+            .where(AnimeSourceLink.status == "confirmed")
+            .where(ExternalEntry.disabled.is_(False))
+            .where(ExternalEntry.provider.in_(("bangumi", "anilist")))
+            .order_by(ExternalEntry.provider, SourceSnapshot.version.desc())
+        )
+    ).all()
+    occurrences = (
+        (
+            await session.execute(
+                select(AiringOccurrenceRow)
+                .where(AiringOccurrenceRow.anime_id == anime_id)
+                .order_by(AiringOccurrenceRow.air_date, AiringOccurrenceRow.air_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    snapshots: dict[str, SourceSnapshot] = {}
+    for provider, snapshot in source_rows:
+        snapshots.setdefault(str(provider), snapshot)
+    latest_episode = max(
+        (
+            int(row.episode_label)
+            for row in occurrences
+            if (
+                (row.air_at is not None and row.air_at < now)
+                or (row.air_at is None and row.air_date < now.date())
+            )
+            and row.episode_label.isdigit()
+        ),
+        default=None,
+    )
+    total_episodes = max(
+        (
+            int(snapshot.payload["total_episodes"])
+            for snapshot in snapshots.values()
+            if isinstance(snapshot.payload.get("total_episodes"), int)
+            and snapshot.payload["total_episodes"] > 0
+        ),
+        default=None,
+    )
+    state = classify_subscription(
+        next_occurrence=None,
+        latest_episode=latest_episode,
+        total_episodes=total_episodes,
+        source_statuses=tuple(
+            status
+            for snapshot in snapshots.values()
+            for status in (snapshot.payload.get("status"),)
+            if isinstance(status, str)
+        ),
+    )
+    return state.kind is SubscriptionStateKind.COMPLETED
 
 
 class MikanFeedClient(Protocol):
@@ -347,6 +421,20 @@ class MikanReleasePipeline:
             if batch is None or batch.anime_id is None:
                 return
             anime = await session.get(Anime, batch.anime_id)
+            if await _is_completed_anime(
+                session,
+                anime_id=batch.anime_id,
+                now=now,
+            ):
+                async with self._sessions() as write_session, write_session.begin():
+                    completed_batch = await write_session.get(
+                        ReleaseBatch,
+                        batch_id,
+                        with_for_update=True,
+                    )
+                    if completed_batch is not None and completed_batch.status == "ready":
+                        completed_batch.status = "suppressed"
+                return
             releases = (
                 (
                     await session.execute(

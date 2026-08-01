@@ -463,6 +463,36 @@ async def test_real_multi_candidate_returns_two_rows(async_engine: AsyncEngine) 
     assert len(reply.candidates) == 2
 
 
+async def test_real_detail_prefers_unique_exact_title(async_engine: AsyncEngine) -> None:
+    await _insert_anime(
+        async_engine,
+        anime_id=SAMPLE_ANIME_ID,
+        title="「与你相恋到生命尽头」样片",
+        nsfw="false",
+    )
+    await _insert_anime(
+        async_engine,
+        anime_id=SECOND_ANIME_ID,
+        title="与你相恋到生命尽头",
+        nsfw="false",
+    )
+    factory = _sessions_for(async_engine)
+    adapter = EventAdapter(sessions=factory)
+
+    reply = await adapter.handle_message(
+        platform="qq",
+        group_id="100",
+        user_id="u1",
+        display_name="User",
+        unified_msg_origin="umo",
+        content="/番剧 详情 与你相恋到生命尽头",
+    )
+
+    assert reply.kind == "text"
+    assert "与你相恋到生命尽头\n" in reply.blocks[0].text
+    assert "样片" not in reply.blocks[0].text
+
+
 @pytest.mark.asyncio
 async def test_real_resource_detail_returns_brief_sources_and_one_safe_page_link(
     async_engine: AsyncEngine,

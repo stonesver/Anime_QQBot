@@ -36,6 +36,7 @@ async def test_fetch_media_maps_to_anime_detail() -> None:
     assert detail.total_episodes == 12
     assert detail.score == 78.0
     assert detail.nsfw is False
+    assert detail.status == "RELEASING"
 
 
 @respx.mock
