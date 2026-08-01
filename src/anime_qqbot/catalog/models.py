@@ -74,6 +74,7 @@ class AnimeDetail:
     release_year: int | None = None
     season_name: str | None = None
     media_format: str | None = None
+    status: str | None = None
 
     @property
     def title(self) -> str:

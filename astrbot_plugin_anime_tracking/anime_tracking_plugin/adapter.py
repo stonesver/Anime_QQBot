@@ -244,6 +244,8 @@ async def _query_to_reply(result: QueryResult, *, ctx: ChatContext) -> Reply:
 
 async def _subscribe_to_reply(result: SubscribeResult) -> Reply:
     if not result.success:
+        if result.informational:
+            return Reply.from_text(result.detail_message)
         return Reply.from_error(result.detail_message)
     if result.anime is None:
         return Reply.from_text(result.detail_message)

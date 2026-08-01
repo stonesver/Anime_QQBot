@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from anime_qqbot.entrypoints.cli import _discover_mikan_links, _register_mikan_link
 from anime_qqbot.notifications.outbox import OutboxRepository
-from anime_qqbot.persistence.models.catalog import Anime, AnimeSourceLink, ExternalEntry
+from anime_qqbot.persistence.models.catalog import (
+    Anime,
+    AnimeSourceLink,
+    ExternalEntry,
+    SourceSnapshot,
+)
 from anime_qqbot.persistence.models.identity import ChatGroup
 from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 from anime_qqbot.persistence.models.resources import MikanFeedState, ReleaseBatch, ResourceRelease
@@ -343,6 +348,74 @@ async def test_restart_closes_batch_and_enqueues_filtered_group_job(
     assert "https://" not in str(job.payload)
     assert "fresh-release" not in str(job.payload)
     assert job.expires_at == release_pub_date + timedelta(hours=24)
+
+
+async def test_completed_anime_suppresses_ready_resource_batch(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    anime_id, _group_id = await _seed_target(sessions)
+    pipeline = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient(
+            [
+                MikanFeedResult(items=(), etag='"baseline"', last_modified=None),
+                _feed(guid="completed-release", pub_date=NOW + timedelta(minutes=4)),
+            ]
+        ),
+        outbox=OutboxRepository(sessions),
+    )
+    await pipeline.run_once(NOW)
+    await pipeline.run_once(NOW + timedelta(minutes=5))
+
+    entry_id = uuid4()
+    async with sessions() as session, session.begin():
+        session.add(
+            ExternalEntry(
+                id=entry_id,
+                provider="anilist",
+                external_id="finished-1",
+                url="https://anilist.co/anime/finished-1",
+                disabled=False,
+                created_at=NOW,
+                updated_at=NOW,
+            )
+        )
+        session.add(
+            AnimeSourceLink(
+                id=uuid4(),
+                anime_id=anime_id,
+                external_entry_id=entry_id,
+                status="confirmed",
+                evidence_type="manual",
+                confidence=1.0,
+                method="fixture",
+                created_at=NOW,
+            )
+        )
+        session.add(
+            SourceSnapshot(
+                id=uuid4(),
+                external_entry_id=entry_id,
+                version=1,
+                payload={"status": "FINISHED", "total_episodes": 12},
+                source_time=NOW,
+                fetched_at=NOW,
+            )
+        )
+
+    restarted = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient([_feed(not_modified=True)]),
+        outbox=OutboxRepository(sessions),
+    )
+    result = await restarted.run_once(NOW + timedelta(minutes=15))
+
+    assert result.batches_closed == 1
+    async with sessions() as session:
+        batch = (await session.execute(select(ReleaseBatch))).scalar_one()
+        job_count = await session.scalar(select(func.count()).select_from(NotificationJob))
+    assert batch.status == "suppressed"
+    assert job_count == 0
 
 
 async def test_batch_older_than_24_hours_is_suppressed(

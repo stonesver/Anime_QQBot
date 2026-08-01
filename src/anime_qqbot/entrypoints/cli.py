@@ -548,19 +548,23 @@ async def _plan_airing_reminders(components: WorkerComponents, now: datetime) ->
     business_key), so re-running this loop is safe.
     """
     created = 0
-    horizon_start = now - timedelta(hours=2)
     horizon_end = now + timedelta(minutes=10)
     async with components.sessions() as session:
         stmt = (
             select(AiringOccurrenceRow, Anime)
             .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
             .where(AiringOccurrenceRow.air_at.is_not(None))
-            .where(AiringOccurrenceRow.air_at >= horizon_start)
+            .where(AiringOccurrenceRow.air_at >= now)
             .where(AiringOccurrenceRow.air_at <= horizon_end)
             .where(Anime.disabled.is_(False))
         )
         rows = (await session.execute(stmt)).all()
+    next_by_anime: dict[UUID, tuple[AiringOccurrenceRow, Anime]] = {}
     for occ, anime in rows:
+        current = next_by_anime.get(anime.id)
+        if current is None or (occ.air_at, occ.id) < (current[0].air_at, current[0].id):
+            next_by_anime[anime.id] = (occ, anime)
+    for occ, anime in next_by_anime.values():
         if occ.air_at is None or not isinstance(anime.id, UUID):
             continue
         event = AiringEvent(

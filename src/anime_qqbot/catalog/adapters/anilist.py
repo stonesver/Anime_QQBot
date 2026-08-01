@@ -159,7 +159,7 @@ class AniListClient:
             id idMal
             title { romaji english native }
             description
-            season seasonYear type format episodes duration
+            season seasonYear type format status episodes duration
             startDate { year month day }
             endDate { year month day }
             averageScore popularity genres isAdult
@@ -220,6 +220,7 @@ class AniListClient:
         }
         release_year = media.get("seasonYear")
         media_format = cls._optional_string(media.get("format"))
+        status = cls._optional_string(media.get("status"))
         return AnimeDetail(
             subject_id=anilist_id,
             title_cn=cls._optional_string(titles.get("native")),
@@ -233,6 +234,7 @@ class AniListClient:
             release_year=int(release_year) if isinstance(release_year, int) else None,
             season_name=season_names.get(season or ""),
             media_format=media_format,
+            status=status,
         )
 
     @classmethod
