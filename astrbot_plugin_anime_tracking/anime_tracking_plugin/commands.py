@@ -29,6 +29,7 @@ class CommandHandlers:
         self._adapter = EventAdapter(
             sessions=getattr(lifecycle, "sessions", None),
             card_reply_builder=getattr(lifecycle, "card_reply_factory", None),
+            schedule_reply_builder=getattr(lifecycle, "schedule_reply_factory", None),
         )
 
     # In production, AstrBot's decorator maps group-level commands to these

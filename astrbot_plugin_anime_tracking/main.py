@@ -217,6 +217,7 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
         return EventAdapter(
             sessions=lifecycle.sessions,
             card_reply_builder=lifecycle.card_reply_factory,
+            schedule_reply_builder=lifecycle.schedule_reply_factory,
         )
 
     async def _dispatch_result(self, event: AstrMessageEvent) -> Any:

@@ -34,6 +34,7 @@ from anime_qqbot.persistence.session import create_engine, create_session_factor
 from anime_qqbot.presentation.assembler import CardDataAssembler
 from anime_qqbot.presentation.poster_cache import PosterCache
 from anime_qqbot.presentation.renderer import AnimeCardRenderer
+from anime_qqbot.presentation.schedule_renderer import WeeklyScheduleRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class PluginLifecycle:
         self.dispatcher: Any | None = None
         self.napcat_monitor: NapCatStatusMonitor | None = None
         self.card_reply_factory: Any | None = None
+        self.schedule_reply_factory: Any | None = None
         self._local_poster_cache: PosterCache | None = None
         self.governor = SendGovernor(limits=self._governor_limits())
 
@@ -103,6 +105,7 @@ class PluginLifecycle:
             self.sessions = None
             self.dispatcher = None
             self.card_reply_factory = None
+            self.schedule_reply_factory = None
             self._local_poster_cache = None
             self.napcat_monitor = None
             raise
@@ -163,13 +166,20 @@ class PluginLifecycle:
             cjk_font_path=cjk_font,
             mono_font_path=mono_font,
         )
+        schedule_renderer = WeeklyScheduleRenderer(
+            asset_root / "schedules" / "weekly",
+            cjk_font_path=cjk_font,
+            mono_font_path=mono_font,
+        )
         from .card_reply_factory import CardReplyFactory
+        from .schedule_reply_factory import ScheduleReplyFactory
 
         self.card_reply_factory = CardReplyFactory(
             assembler=CardDataAssembler(self.sessions),
             poster_locator=self._local_poster_cache.find_local_poster,
             renderer=renderer,
         )
+        self.schedule_reply_factory = ScheduleReplyFactory(renderer=schedule_renderer)
 
     async def shutdown(self) -> None:
         if not self._running:
@@ -191,6 +201,7 @@ class PluginLifecycle:
         self.dispatcher = None
         self.napcat_monitor = None
         self.card_reply_factory = None
+        self.schedule_reply_factory = None
         self._local_poster_cache = None
         logger.info("anime_tracking plugin shut down")
 

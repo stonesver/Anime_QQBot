@@ -4,16 +4,30 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
+from anime_qqbot.application.context import ChatContext
+from anime_qqbot.application.intents import IntentKind
+from anime_qqbot.application.use_cases import QueryResult
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import (
     EventAdapter,
     Reply,
     help_reply,  # noqa: F401
 )
+
+
+class ScheduleBuilder:
+    def __init__(self) -> None:
+        self.called = False
+
+    async def build_weekly(self, *, rows, ctx, fallback, now):
+        self.called = True
+        return Reply.from_image(Path("weekly.png"))
 
 
 async def _noop(ctx, intent):
@@ -150,3 +164,33 @@ async def test_unified_msg_origin_passed_through() -> None:
     )
 
     assert reply is not None  # no crash when UMO is present
+
+
+async def test_week_query_uses_schedule_builder_when_available() -> None:
+    builder = ScheduleBuilder()
+    adapter = EventAdapter(sessions=None, schedule_reply_builder=builder)
+    ctx = ChatContext(
+        platform="qq",
+        group_id="1",
+        user_id="2",
+        display_name="d",
+        unified_msg_origin=None,
+        timezone=ZoneInfo("Asia/Shanghai"),
+    )
+    result = QueryResult(
+        kind=IntentKind.WEEK,
+        rows=(
+            SimpleNamespace(
+                id="anime-1",
+                display_title="测试番剧",
+                air_date=None,
+                air_at=None,
+                episode_label="01",
+            ),
+        ),
+    )
+
+    reply = await adapter._present_query(result, ctx=ctx)  # type: ignore[arg-type]
+
+    assert builder.called
+    assert reply.kind == "image"

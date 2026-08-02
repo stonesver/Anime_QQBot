@@ -124,6 +124,17 @@ class CardReplyBuilder(Protocol):
     ) -> Reply: ...
 
 
+class ScheduleReplyBuilder(Protocol):
+    async def build_weekly(
+        self,
+        *,
+        rows: tuple[Any, ...],
+        ctx: ChatContext,
+        fallback: Reply,
+        now: datetime,
+    ) -> Reply: ...
+
+
 def help_reply() -> Reply:
     return Reply(
         kind="help",
@@ -297,15 +308,30 @@ class EventAdapter:
         sessions: async_sessionmaker[AsyncSession] | None,
         handlers: dict[IntentKind, UseCaseHandler] | None = None,
         card_reply_builder: CardReplyBuilder | None = None,
+        schedule_reply_builder: ScheduleReplyBuilder | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._sessions = sessions
         self._card_reply_builder = card_reply_builder
+        self._schedule_reply_builder = schedule_reply_builder
         self._clock = clock or _now
         self._handlers = handlers or self._default_handlers()
 
-    async def _present_query(self, result: QueryResult, *, ctx: ChatContext) -> Reply:
+    async def _present_query(
+        self,
+        result: QueryResult,
+        *,
+        ctx: ChatContext,
+        now: datetime | None = None,
+    ) -> Reply:
         fallback = await _query_to_reply(result, ctx=ctx)
+        if result.kind == IntentKind.WEEK and self._schedule_reply_builder is not None:
+            return await self._schedule_reply_builder.build_weekly(
+                rows=result.rows,
+                ctx=ctx,
+                fallback=fallback,
+                now=now or self._clock(),
+            )
         if self._card_reply_builder is None or result.detail is None:
             return fallback
         scene = {
@@ -487,13 +513,15 @@ class EventAdapter:
         async def _week(ctx: ChatContext, intent: Intent) -> Reply:
             if s is None:
                 return await _no_db()
+            now = self._clock()
             return await self._present_query(
                 await week_listing(
                     s,
-                    now=self._clock(),
+                    now=now,
                     timezone=ctx.timezone,
                 ),
                 ctx=ctx,
+                now=now,
             )
 
         async def _search(ctx: ChatContext, intent: Intent) -> Reply:
@@ -606,6 +634,7 @@ __all__ = [
     "EventAdapter",
     "Reply",
     "ReplyBlock",
+    "ScheduleReplyBuilder",
     "UseCaseHandler",
     "help_reply",
 ]
