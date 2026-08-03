@@ -857,7 +857,7 @@ async def test_real_today_prefers_exact_airing_in_group_timezone(
 
 
 @pytest.mark.asyncio
-async def test_real_week_uses_group_local_monday(async_engine: AsyncEngine) -> None:
+async def test_real_week_uses_group_local_sunday(async_engine: AsyncEngine) -> None:
     from anime_qqbot.persistence.models.catalog import (
         AiringOccurrenceRow,
         Anime,
@@ -947,7 +947,7 @@ async def test_real_week_uses_group_local_monday(async_engine: AsyncEngine) -> N
     )
 
     assert "本周一番剧" in reply.blocks[0].text
-    assert "上周日番剧" not in reply.blocks[0].text
+    assert "上周日番剧" in reply.blocks[0].text
 
 
 @pytest.mark.asyncio

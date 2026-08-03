@@ -18,7 +18,11 @@ class Renderer:
         self.result = result
         self.kwargs: dict[str, object] | None = None
 
-    async def render_cached(self, rows, **kwargs):
+    async def render_weekly_cached(self, rows, **kwargs):
+        self.kwargs = kwargs
+        return self.result
+
+    async def render_daily_cached(self, rows, **kwargs):
         self.kwargs = kwargs
         return self.result
 
@@ -60,8 +64,8 @@ async def test_success_returns_one_image_without_extra_text(tmp_path: Path) -> N
     assert reply.blocks == [type(reply.blocks[0])(image_path=image)]
     assert renderer.kwargs == {
         "timezone": ZoneInfo("Asia/Shanghai"),
-        "week_start": date(2026, 8, 3),
-        "week_end": date(2026, 8, 9),
+        "week_start": date(2026, 8, 2),
+        "week_end": date(2026, 8, 8),
     }
 
 
@@ -94,3 +98,39 @@ async def test_empty_rows_return_text_fallback_without_renderer_call() -> None:
 
     assert reply is fallback
     assert renderer.kwargs is None
+
+
+async def test_today_success_returns_one_image_with_requested_date(tmp_path: Path) -> None:
+    image = tmp_path / "today.png"
+    image.touch()
+    renderer = Renderer(RenderResult(image))
+    factory = ScheduleReplyFactory(renderer=renderer)  # type: ignore[arg-type]
+
+    reply = await factory.build_today(
+        rows=(row(),),
+        ctx=context(),
+        fallback=Reply.from_text("fallback"),
+        target_date=date(2026, 8, 3),
+    )
+
+    assert reply.kind == "image"
+    assert reply.blocks == [type(reply.blocks[0])(image_path=image)]
+    assert renderer.kwargs == {
+        "timezone": ZoneInfo("Asia/Shanghai"),
+        "target_date": date(2026, 8, 3),
+    }
+
+
+async def test_today_failed_render_returns_text_fallback() -> None:
+    renderer = Renderer(RenderResult(None, "render_failed"))
+    factory = ScheduleReplyFactory(renderer=renderer)  # type: ignore[arg-type]
+    fallback = Reply.from_text("fallback")
+
+    reply = await factory.build_today(
+        rows=(row(),),
+        ctx=context(),
+        fallback=fallback,
+        target_date=date(2026, 8, 3),
+    )
+
+    assert reply is fallback

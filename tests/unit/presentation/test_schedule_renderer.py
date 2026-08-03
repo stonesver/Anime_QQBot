@@ -10,9 +10,11 @@ import pytest
 from PIL import Image
 
 from anime_qqbot.presentation.schedule_renderer import (
+    DAILY_MAX_HEIGHT,
+    DAILY_WIDTH,
     WEEKLY_MAX_HEIGHT,
     WEEKLY_WIDTH,
-    WeeklyScheduleRenderer,
+    ScheduleImageRenderer,
 )
 
 CJK_FONT = Path("/System/Library/Fonts/Hiragino Sans GB.ttc")
@@ -39,55 +41,78 @@ def rows() -> tuple[SimpleNamespace, ...]:
 
 
 @pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")
-async def test_renders_one_valid_weekly_png(tmp_path: Path) -> None:
-    renderer = WeeklyScheduleRenderer(
-        tmp_path / "weekly",
+async def test_renders_one_valid_weekly_calendar_png(tmp_path: Path) -> None:
+    renderer = ScheduleImageRenderer(
+        tmp_path / "schedules",
         cjk_font_path=CJK_FONT,
         mono_font_path=MONO_FONT,
     )
 
-    result = await renderer.render_cached(
+    result = await renderer.render_weekly_cached(
         rows(),
         timezone=ZoneInfo("Asia/Shanghai"),
-        week_start=date(2026, 8, 3),
-        week_end=date(2026, 8, 9),
+        week_start=date(2026, 8, 2),
+        week_end=date(2026, 8, 8),
     )
 
     assert result.succeeded
     assert result.path is not None
+    assert result.path.parent.name == "weekly"
     with Image.open(result.path) as image:
         assert image.format == "PNG"
         assert image.width == WEEKLY_WIDTH
-        assert 720 <= image.height <= WEEKLY_MAX_HEIGHT
+        assert 500 <= image.height <= WEEKLY_MAX_HEIGHT
 
 
 @pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")
-async def test_reuses_cached_weekly_png(tmp_path: Path) -> None:
-    renderer = WeeklyScheduleRenderer(
-        tmp_path / "weekly",
+async def test_reuses_cached_weekly_calendar_png(tmp_path: Path) -> None:
+    renderer = ScheduleImageRenderer(
+        tmp_path / "schedules",
         cjk_font_path=CJK_FONT,
         mono_font_path=MONO_FONT,
     )
     kwargs = {
         "timezone": ZoneInfo("Asia/Shanghai"),
-        "week_start": date(2026, 8, 3),
-        "week_end": date(2026, 8, 9),
+        "week_start": date(2026, 8, 2),
+        "week_end": date(2026, 8, 8),
     }
 
-    first = await renderer.render_cached(rows(), **kwargs)
-    second = await renderer.render_cached(rows(), **kwargs)
+    first = await renderer.render_weekly_cached(rows(), **kwargs)
+    second = await renderer.render_weekly_cached(rows(), **kwargs)
 
     assert first.path == second.path
 
 
-async def test_empty_schedule_returns_failure_without_file(tmp_path: Path) -> None:
-    renderer = WeeklyScheduleRenderer.__new__(WeeklyScheduleRenderer)
+@pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")
+async def test_renders_daily_png_with_known_and_pending_rows(tmp_path: Path) -> None:
+    renderer = ScheduleImageRenderer(
+        tmp_path / "schedules",
+        cjk_font_path=CJK_FONT,
+        mono_font_path=MONO_FONT,
+    )
 
-    result = await renderer.render_cached(
+    result = await renderer.render_daily_cached(
+        rows(),
+        timezone=ZoneInfo("Asia/Shanghai"),
+        target_date=date(2026, 8, 3),
+    )
+
+    assert result.succeeded
+    assert result.path is not None
+    assert result.path.parent.name == "daily"
+    with Image.open(result.path) as image:
+        assert image.format == "PNG"
+        assert image.width == DAILY_WIDTH
+        assert 540 <= image.height <= DAILY_MAX_HEIGHT
+
+
+async def test_empty_schedule_returns_failure_without_file(tmp_path: Path) -> None:
+    renderer = ScheduleImageRenderer.__new__(ScheduleImageRenderer)
+
+    result = await renderer.render_daily_cached(
         (),
         timezone=ZoneInfo("Asia/Shanghai"),
-        week_start=date(2026, 8, 3),
-        week_end=date(2026, 8, 9),
+        target_date=date(2026, 8, 3),
     )
 
     assert result.succeeded is False

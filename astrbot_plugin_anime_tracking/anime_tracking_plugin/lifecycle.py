@@ -34,7 +34,7 @@ from anime_qqbot.persistence.session import create_engine, create_session_factor
 from anime_qqbot.presentation.assembler import CardDataAssembler
 from anime_qqbot.presentation.poster_cache import PosterCache
 from anime_qqbot.presentation.renderer import AnimeCardRenderer
-from anime_qqbot.presentation.schedule_renderer import WeeklyScheduleRenderer
+from anime_qqbot.presentation.schedule_renderer import ScheduleImageRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -166,8 +166,8 @@ class PluginLifecycle:
             cjk_font_path=cjk_font,
             mono_font_path=mono_font,
         )
-        schedule_renderer = WeeklyScheduleRenderer(
-            asset_root / "schedules" / "weekly",
+        schedule_renderer = ScheduleImageRenderer(
+            asset_root / "schedules",
             cjk_font_path=cjk_font,
             mono_font_path=mono_font,
         )

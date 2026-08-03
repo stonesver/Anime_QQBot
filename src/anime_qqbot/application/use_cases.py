@@ -293,7 +293,7 @@ async def week_listing(
     timezone: ZoneInfo,
 ) -> QueryResult:
     today = now.astimezone(timezone).date()
-    start_date = today - timedelta(days=today.weekday())
+    start_date = today - timedelta(days=(today.weekday() + 1) % 7)
     end_date = start_date + timedelta(days=7)
     rows = await _airing_rows_between(
         sessions,

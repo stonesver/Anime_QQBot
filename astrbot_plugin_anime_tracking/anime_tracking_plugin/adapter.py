@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID
@@ -132,6 +132,15 @@ class ScheduleReplyBuilder(Protocol):
         ctx: ChatContext,
         fallback: Reply,
         now: datetime,
+    ) -> Reply: ...
+
+    async def build_today(
+        self,
+        *,
+        rows: tuple[Any, ...],
+        ctx: ChatContext,
+        fallback: Reply,
+        target_date: date,
     ) -> Reply: ...
 
 
@@ -323,6 +332,7 @@ class EventAdapter:
         *,
         ctx: ChatContext,
         now: datetime | None = None,
+        target_date: date | None = None,
     ) -> Reply:
         fallback = await _query_to_reply(result, ctx=ctx)
         if result.kind == IntentKind.WEEK and self._schedule_reply_builder is not None:
@@ -331,6 +341,17 @@ class EventAdapter:
                 ctx=ctx,
                 fallback=fallback,
                 now=now or self._clock(),
+            )
+        if (
+            result.kind == IntentKind.TODAY
+            and self._schedule_reply_builder is not None
+            and target_date is not None
+        ):
+            return await self._schedule_reply_builder.build_today(
+                rows=result.rows,
+                ctx=ctx,
+                fallback=fallback,
+                target_date=target_date,
             )
         if self._card_reply_builder is None or result.detail is None:
             return fallback
@@ -496,9 +517,7 @@ class EventAdapter:
             if s is None:
                 return await _no_db()
             if intent.query:
-                from datetime import date as date_type
-
-                target_date = date_type.fromisoformat(intent.query)
+                target_date = date.fromisoformat(intent.query)
             else:
                 target_date = self._clock().astimezone(ctx.timezone).date()
             return await self._present_query(
@@ -508,6 +527,7 @@ class EventAdapter:
                     timezone=ctx.timezone,
                 ),
                 ctx=ctx,
+                target_date=target_date,
             )
 
         async def _week(ctx: ChatContext, intent: Intent) -> Reply:

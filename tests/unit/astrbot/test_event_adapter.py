@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -28,6 +29,10 @@ class ScheduleBuilder:
     async def build_weekly(self, *, rows, ctx, fallback, now):
         self.called = True
         return Reply.from_image(Path("weekly.png"))
+
+    async def build_today(self, *, rows, ctx, fallback, target_date):
+        self.called = True
+        return Reply.from_image(Path("today.png"))
 
 
 async def _noop(ctx, intent):
@@ -191,6 +196,40 @@ async def test_week_query_uses_schedule_builder_when_available() -> None:
     )
 
     reply = await adapter._present_query(result, ctx=ctx)  # type: ignore[arg-type]
+
+    assert builder.called
+    assert reply.kind == "image"
+
+
+async def test_today_query_uses_schedule_builder_with_requested_date() -> None:
+    builder = ScheduleBuilder()
+    adapter = EventAdapter(sessions=None, schedule_reply_builder=builder)
+    ctx = ChatContext(
+        platform="qq",
+        group_id="1",
+        user_id="2",
+        display_name="d",
+        unified_msg_origin=None,
+        timezone=ZoneInfo("Asia/Shanghai"),
+    )
+    result = QueryResult(
+        kind=IntentKind.TODAY,
+        rows=(
+            SimpleNamespace(
+                id="anime-1",
+                display_title="测试番剧",
+                air_date=date(2026, 8, 3),
+                air_at=None,
+                episode_label="01",
+            ),
+        ),
+    )
+
+    reply = await adapter._present_query(
+        result,
+        ctx=ctx,
+        target_date=date(2026, 8, 3),
+    )  # type: ignore[arg-type]
 
     assert builder.called
     assert reply.kind == "image"
