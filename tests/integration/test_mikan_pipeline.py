@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from anime_qqbot.entrypoints.cli import _discover_mikan_links, _register_mikan_link
 from anime_qqbot.notifications.outbox import OutboxRepository
 from anime_qqbot.persistence.models.catalog import (
+    AiringOccurrenceRow,
     Anime,
     AnimeSourceLink,
     ExternalEntry,
@@ -18,7 +19,12 @@ from anime_qqbot.persistence.models.catalog import (
 )
 from anime_qqbot.persistence.models.identity import ChatGroup
 from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
-from anime_qqbot.persistence.models.resources import MikanFeedState, ReleaseBatch, ResourceRelease
+from anime_qqbot.persistence.models.resources import (
+    MikanFeedState,
+    ReleaseBatch,
+    ReleaseBatchItem,
+    ResourceRelease,
+)
 from anime_qqbot.persistence.models.subscriptions_v2 import (
     FollowSubscription,
     SubscriptionResourceFilter,
@@ -329,7 +335,7 @@ async def test_restart_closes_batch_and_enqueues_filtered_group_job(
         job = (await session.execute(select(NotificationJob))).scalar_one()
     assert batch.status == "planned"
     assert job.chat_group_id == group_id
-    assert job.business_key == f"mikan/{batch.id}"
+    assert job.business_key == f"mikan/{batch.anime_id}/1"
     assert job.payload["at_user_ids"] == ["u-chs"]
     assert "text" not in job.payload
     assert job.payload["display_title"] == "Example Anime"
@@ -448,6 +454,243 @@ async def test_batch_older_than_24_hours_is_suppressed(
         job_count = await session.scalar(select(func.count()).select_from(NotificationJob))
     assert batch.status == "suppressed"
     assert job_count == 0
+
+
+async def test_pipeline_suppresses_a_new_old_episode_when_a_newer_episode_is_available(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    anime_id, _group_id = await _seed_target(sessions)
+    async with sessions() as session:
+        mikan_entry_id = await session.scalar(
+            select(ExternalEntry.id).where(
+                ExternalEntry.provider == "mikan",
+                ExternalEntry.external_id == "123",
+            )
+        )
+    assert mikan_entry_id is not None
+    async with sessions() as session, session.begin():
+        session.add_all(
+            [
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=anime_id,
+                    source_entry_id=mikan_entry_id,
+                    episode_label="07",
+                    air_date=(NOW - timedelta(days=1)).date(),
+                    air_at=NOW - timedelta(days=1),
+                    precision="exact",
+                    source_event_key="test:7",
+                    updated_at=NOW,
+                ),
+                ResourceRelease(
+                    id=uuid4(),
+                    mikan_item_id="existing-episode-7",
+                    content_fingerprint="existing-episode-7",
+                    raw_title="[Group Z] Example Anime [07][1080p][简日]",
+                    pub_date=NOW - timedelta(days=1),
+                    page_url="https://mikanani.me/Home/Episode/existing-episode-7",
+                    episode_label="07",
+                    subtitle_groups=["Group Z"],
+                    language="chs",
+                    resolutions=["1080p"],
+                    anime_id=anime_id,
+                    mikan_entry_id=mikan_entry_id,
+                    parser_version="v2",
+                    status="suppressed",
+                    discovered_at=NOW - timedelta(days=1),
+                ),
+            ]
+        )
+
+    pipeline = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient(
+            [
+                MikanFeedResult(items=(), etag='"baseline"', last_modified=None),
+                MikanFeedResult(
+                    items=(
+                        MikanItem(
+                            guid="late-episode-4",
+                            title="[Group A] Example Anime [04][1080p][简日]",
+                            pub_date=NOW + timedelta(minutes=4),
+                            page_url="https://mikanani.me/Home/Episode/late-episode-4",
+                        ),
+                    ),
+                    etag='"update"',
+                    last_modified=None,
+                ),
+            ]
+        ),
+        outbox=OutboxRepository(sessions),
+    )
+
+    await pipeline.run_once(NOW)
+    await pipeline.run_once(NOW + timedelta(minutes=5))
+    await pipeline.run_once(NOW + timedelta(minutes=15))
+
+    async with sessions() as session:
+        batch = (await session.execute(select(ReleaseBatch))).scalar_one()
+        jobs = (await session.execute(select(NotificationJob))).scalars().all()
+    assert batch.episode_label == "04"
+    assert batch.status == "suppressed"
+    assert jobs == []
+
+
+async def test_pipeline_creates_one_notification_for_the_same_episode_across_batches(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    anime_id, group_id = await _seed_target(sessions)
+    async with sessions() as session:
+        mikan_entry_id = await session.scalar(
+            select(ExternalEntry.id).where(
+                ExternalEntry.provider == "mikan",
+                ExternalEntry.external_id == "123",
+            )
+        )
+    assert mikan_entry_id is not None
+    first_batch_id = uuid4()
+    second_batch_id = uuid4()
+    async with sessions() as session, session.begin():
+        batch_items: list[ReleaseBatchItem] = []
+        session.add(
+            AiringOccurrenceRow(
+                id=uuid4(),
+                anime_id=anime_id,
+                source_entry_id=mikan_entry_id,
+                episode_label="07",
+                air_date=(NOW - timedelta(days=1)).date(),
+                air_at=NOW - timedelta(days=1),
+                precision="exact",
+                source_event_key="test:7",
+                updated_at=NOW,
+            )
+        )
+        for batch_id, release_suffix, window_started_at in (
+            (first_batch_id, "first", NOW - timedelta(minutes=20)),
+            (second_batch_id, "second", NOW - timedelta(minutes=11)),
+        ):
+            release_id = uuid4()
+            session.add(
+                ResourceRelease(
+                    id=release_id,
+                    mikan_item_id=f"episode-7-{release_suffix}",
+                    content_fingerprint=f"episode-7-{release_suffix}",
+                    raw_title=f"[Group {release_suffix}] Example Anime [07][1080p][简日]",
+                    pub_date=NOW - timedelta(minutes=1),
+                    page_url=f"https://mikanani.me/Home/Episode/episode-7-{release_suffix}",
+                    episode_label="07",
+                    subtitle_groups=[f"Group {release_suffix}"],
+                    language="chs",
+                    resolutions=["1080p"],
+                    anime_id=anime_id,
+                    mikan_entry_id=mikan_entry_id,
+                    parser_version="v2",
+                    status="batched",
+                    discovered_at=window_started_at,
+                )
+            )
+            session.add(
+                ReleaseBatch(
+                    id=batch_id,
+                    anime_id=anime_id,
+                    episode_label="07",
+                    window_started_at=window_started_at,
+                    status="open",
+                )
+            )
+            batch_items.append(ReleaseBatchItem(batch_id=batch_id, release_id=release_id))
+        await session.flush()
+        session.add_all(batch_items)
+
+    pipeline = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient([MikanFeedResult(items=(), etag='"baseline"', last_modified=None)]),
+        outbox=OutboxRepository(sessions),
+    )
+    result = await pipeline.run_once(NOW)
+
+    assert result.batches_closed == 2
+    async with sessions() as session:
+        jobs = (await session.execute(select(NotificationJob))).scalars().all()
+    assert len(jobs) == 1
+    assert jobs[0].chat_group_id == group_id
+    assert jobs[0].business_key == f"mikan/{anime_id}/7"
+
+
+async def test_pipeline_recognizes_a_legacy_batch_notification_for_the_same_episode(
+    sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    anime_id, group_id = await _seed_target(sessions)
+    async with sessions() as session:
+        mikan_entry_id = await session.scalar(
+            select(ExternalEntry.id).where(
+                ExternalEntry.provider == "mikan",
+                ExternalEntry.external_id == "123",
+            )
+        )
+    assert mikan_entry_id is not None
+    batch_id = uuid4()
+    async with sessions() as session, session.begin():
+        release_id = uuid4()
+        session.add(
+            ResourceRelease(
+                id=release_id,
+                mikan_item_id="episode-7-new-subtitle",
+                content_fingerprint="episode-7-new-subtitle",
+                raw_title="[Group B] Example Anime [07][1080p][简日]",
+                pub_date=NOW - timedelta(minutes=1),
+                page_url="https://mikanani.me/Home/Episode/episode-7-new-subtitle",
+                episode_label="07",
+                subtitle_groups=["Group B"],
+                language="chs",
+                resolutions=["1080p"],
+                anime_id=anime_id,
+                mikan_entry_id=mikan_entry_id,
+                parser_version="v2",
+                status="batched",
+                discovered_at=NOW - timedelta(minutes=11),
+            )
+        )
+        session.add(
+            ReleaseBatch(
+                id=batch_id,
+                anime_id=anime_id,
+                episode_label="07",
+                window_started_at=NOW - timedelta(minutes=11),
+                status="open",
+            )
+        )
+        session.add(
+            NotificationJob(
+                id=uuid4(),
+                chat_group_id=group_id,
+                job_type="release",
+                business_key=f"mikan/{uuid4()}",
+                payload={"anime_id": str(anime_id), "episode_label": "07"},
+                status="sent",
+                available_at=NOW - timedelta(days=1),
+                expires_at=NOW,
+                attempt_count=1,
+                created_at=NOW - timedelta(days=1),
+                updated_at=NOW - timedelta(days=1),
+            )
+        )
+        await session.flush()
+        session.add(ReleaseBatchItem(batch_id=batch_id, release_id=release_id))
+
+    pipeline = MikanReleasePipeline(
+        sessions=sessions,
+        client=FakeMikanClient([MikanFeedResult(items=(), etag='"baseline"', last_modified=None)]),
+        outbox=OutboxRepository(sessions),
+    )
+    await pipeline.run_once(NOW)
+
+    async with sessions() as session:
+        batch = await session.get(ReleaseBatch, batch_id)
+        jobs = (await session.execute(select(NotificationJob))).scalars().all()
+    assert batch is not None
+    assert batch.status == "suppressed"
+    assert len(jobs) == 1
 
 
 async def test_operator_can_register_confirmed_mikan_mapping(

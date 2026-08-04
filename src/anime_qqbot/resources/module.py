@@ -23,6 +23,7 @@ from anime_qqbot.persistence.models.catalog import (
     ExternalEntry,
     SourceSnapshot,
 )
+from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 from anime_qqbot.persistence.models.resources import (
     MikanFeedState,
     ReleaseBatch,
@@ -39,6 +40,94 @@ from anime_qqbot.resources.parser import parse_release_title
 from anime_qqbot.resources.presentation import build_release_notification_payload
 
 logger = logging.getLogger(__name__)
+
+
+def _episode_number(value: object) -> int | None:
+    label = str(value or "").strip()
+    if not label.isdigit():
+        return None
+    return int(label)
+
+
+async def _highest_available_episode(
+    session: AsyncSession,
+    *,
+    anime_id: UUID,
+    now: datetime,
+) -> int | None:
+    """Return the most recent numeric resource episode that is currently relevant.
+
+    The broadcast schedule is an upper bound when known.  This avoids a newly
+    released alternative subtitle for an old episode becoming a new alert after
+    a later episode already has resources.  Without schedule data, the newest
+    numeric resource remains the best available signal.
+    """
+
+    occurrences = (
+        (
+            await session.execute(
+                select(AiringOccurrenceRow)
+                .where(AiringOccurrenceRow.anime_id == anime_id)
+                .order_by(AiringOccurrenceRow.air_date, AiringOccurrenceRow.air_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    latest_aired_episode = max(
+        (
+            episode
+            for occurrence in occurrences
+            if (
+                (occurrence.air_at is not None and occurrence.air_at <= now)
+                or (occurrence.air_at is None and occurrence.air_date <= now.date())
+            )
+            for episode in (_episode_number(occurrence.episode_label),)
+            if episode is not None
+        ),
+        default=None,
+    )
+    release_labels = (
+        await session.execute(
+            select(ResourceRelease.episode_label).where(ResourceRelease.anime_id == anime_id)
+        )
+    ).scalars()
+    return max(
+        (
+            episode
+            for label in release_labels
+            for episode in (_episode_number(label),)
+            if episode is not None
+            and (latest_aired_episode is None or episode <= latest_aired_episode)
+        ),
+        default=None,
+    )
+
+
+async def _groups_with_existing_release_notification(
+    session: AsyncSession,
+    *,
+    anime_id: UUID,
+    episode: int,
+    candidate_group_ids: set[UUID],
+) -> set[UUID]:
+    """Recognize both new per-episode keys and legacy per-batch jobs."""
+
+    if not candidate_group_ids:
+        return set()
+    rows = (
+        await session.execute(
+            select(NotificationJob.chat_group_id, NotificationJob.payload)
+            .where(NotificationJob.job_type == "release")
+            .where(NotificationJob.chat_group_id.in_(candidate_group_ids))
+        )
+    ).all()
+    return {
+        chat_group_id
+        for chat_group_id, payload in rows
+        if str(payload.get("anime_id") or "") == str(anime_id)
+        and _episode_number(payload.get("episode_label")) == episode
+    }
 
 
 async def _is_completed_anime(
@@ -435,6 +524,26 @@ class MikanReleasePipeline:
                     if completed_batch is not None and completed_batch.status == "ready":
                         completed_batch.status = "suppressed"
                 return
+            batch_episode = _episode_number(batch.episode_label)
+            highest_available_episode = await _highest_available_episode(
+                session,
+                anime_id=batch.anime_id,
+                now=now,
+            )
+            if (
+                batch_episode is not None
+                and highest_available_episode is not None
+                and batch_episode != highest_available_episode
+            ):
+                async with self._sessions() as write_session, write_session.begin():
+                    stale_batch = await write_session.get(
+                        ReleaseBatch,
+                        batch_id,
+                        with_for_update=True,
+                    )
+                    if stale_batch is not None and stale_batch.status == "ready":
+                        stale_batch.status = "suppressed"
+                return
             releases = (
                 (
                     await session.execute(
@@ -495,7 +604,20 @@ class MikanReleasePipeline:
                 if isinstance(release, ResourceRelease):
                     group_releases[release.id] = release
 
+        if batch_episode is None:
+            already_notified_groups: set[UUID] = set()
+        else:
+            async with self._sessions() as session:
+                already_notified_groups = await _groups_with_existing_release_notification(
+                    session,
+                    anime_id=batch.anime_id,
+                    episode=batch_episode,
+                    candidate_group_ids=set(groups),
+                )
+        planned_groups = 0
         for chat_group_id, (user_ids, release_map) in groups.items():
+            if chat_group_id in already_notified_groups:
+                continue
             selected = sorted(
                 release_map.values(),
                 key=lambda release: (release.pub_date, str(release.id)),
@@ -503,7 +625,11 @@ class MikanReleasePipeline:
             await self._outbox.enqueue(
                 chat_group_id=chat_group_id,
                 job_type="release",
-                business_key=f"mikan/{batch_id}",
+                business_key=(
+                    f"mikan/{batch.anime_id}/{batch_episode}"
+                    if batch_episode is not None
+                    else f"mikan/{batch_id}"
+                ),
                 payload={
                     "anime_id": str(batch.anime_id),
                     **build_release_notification_payload(
@@ -516,11 +642,12 @@ class MikanReleasePipeline:
                 available_at=now,
                 expires_at=min(release.pub_date for release in selected) + timedelta(hours=24),
             )
+            planned_groups += 1
 
         async with self._sessions() as session, session.begin():
             batch = await session.get(ReleaseBatch, batch_id, with_for_update=True)
             if batch is not None and batch.status == "ready":
-                batch.status = "planned" if groups else "suppressed"
+                batch.status = "planned" if planned_groups else "suppressed"
 
 
 def _public_feed_url(external_id: str, configured_url: str | None) -> str | None:
