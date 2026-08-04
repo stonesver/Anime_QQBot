@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from anime_qqbot.application.context import ChatContext
 from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
 from anime_qqbot.notifications.outbox import OutboxRepository
 from anime_qqbot.notifications.planner_v2 import AiringEvent, AiringPlanner
+from anime_qqbot.presentation.subscription_presentation import SubscriptionPresentationReader
 from anime_qqbot.subscriptions.repository_v2 import FollowRepository
 
 
@@ -88,6 +91,65 @@ async def test_unsubscribe_removes(session_factory) -> None:
 
     mine = await repo.list_for_user(chat_group_id=g.id, external_user_id="u1")
     assert mine == []
+
+
+async def test_presentation_reader_scopes_group_heat_and_viewer_state(session_factory) -> None:
+    from uuid import uuid4
+
+    from anime_qqbot.persistence.models.identity import ChatGroup
+
+    group, anime = await _seed_group_and_anime(session_factory)
+    async with session_factory() as session:
+        other_group = ChatGroup(
+            id=uuid4(),
+            platform="qq",
+            external_group_id="456",
+            unified_msg_origin="other-umo",
+            timezone="Asia/Shanghai",
+            enabled=True,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(other_group)
+        await session.commit()
+
+    follow = FollowRepository(session_factory)
+    await follow.subscribe(chat_group_id=group.id, external_user_id="u1", anime_id=anime.id)
+    await follow.subscribe(chat_group_id=group.id, external_user_id="u2", anime_id=anime.id)
+    await follow.subscribe(chat_group_id=other_group.id, external_user_id="u3", anime_id=anime.id)
+    reader = SubscriptionPresentationReader(session_factory)
+
+    first_group = await reader.read(
+        ctx=ChatContext(
+            platform="qq",
+            group_id="123",
+            user_id="u1",
+            display_name="user one",
+            unified_msg_origin=None,
+            timezone=ZoneInfo("Asia/Shanghai"),
+        ),
+        anime_ids=(anime.id,),
+        include_viewer_state=True,
+    )
+    second_group = await reader.read(
+        ctx=ChatContext(
+            platform="qq",
+            group_id="456",
+            user_id="u1",
+            display_name="user one",
+            unified_msg_origin=None,
+            timezone=ZoneInfo("Asia/Shanghai"),
+        ),
+        anime_ids=(anime.id,),
+        include_viewer_state=True,
+    )
+
+    assert first_group.group_follow_counts == {anime.id: 2}
+    assert first_group.viewer_follows is True
+    assert first_group.group_scope != second_group.group_scope
+    assert first_group.viewer_scope != second_group.viewer_scope
+    assert second_group.group_follow_counts == {anime.id: 1}
+    assert second_group.viewer_follows is False
 
 
 @pytest.mark.asyncio

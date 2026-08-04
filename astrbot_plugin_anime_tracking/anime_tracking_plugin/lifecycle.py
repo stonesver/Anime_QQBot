@@ -35,6 +35,7 @@ from anime_qqbot.presentation.assembler import CardDataAssembler
 from anime_qqbot.presentation.poster_cache import PosterCache
 from anime_qqbot.presentation.renderer import AnimeCardRenderer
 from anime_qqbot.presentation.schedule_renderer import ScheduleImageRenderer
+from anime_qqbot.presentation.subscription_presentation import SubscriptionPresentationReader
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +179,12 @@ class PluginLifecycle:
             assembler=CardDataAssembler(self.sessions),
             poster_locator=self._local_poster_cache.find_local_poster,
             renderer=renderer,
+            subscription_reader=SubscriptionPresentationReader(self.sessions),
         )
-        self.schedule_reply_factory = ScheduleReplyFactory(renderer=schedule_renderer)
+        self.schedule_reply_factory = ScheduleReplyFactory(
+            renderer=schedule_renderer,
+            subscription_reader=SubscriptionPresentationReader(self.sessions),
+        )
 
     async def shutdown(self) -> None:
         if not self._running:

@@ -80,6 +80,29 @@ async def test_reuses_valid_cached_render(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")
+async def test_separates_cached_cards_by_viewer_subscription_state(tmp_path: Path) -> None:
+    poster = tmp_path / "poster.png"
+    Image.new("RGB", (400, 600), "red").save(poster)
+    renderer = AnimeCardRenderer(
+        tmp_path / "renders",
+        cjk_font_path=CJK_FONT,
+        mono_font_path=MONO_FONT,
+    )
+    data = card_data()
+
+    base = await renderer.render_cached(data, poster, viewer_follows=False, viewer_scope="viewer-a")
+    following = await renderer.render_cached(
+        data,
+        poster,
+        viewer_follows=True,
+        viewer_scope="viewer-b",
+    )
+
+    assert base.succeeded and following.succeeded
+    assert base.path != following.path
+
+
+@pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")
 async def test_bad_poster_returns_failure_without_placeholder(tmp_path: Path) -> None:
     poster = tmp_path / "poster.png"
     poster.write_text("not an image", encoding="utf-8")

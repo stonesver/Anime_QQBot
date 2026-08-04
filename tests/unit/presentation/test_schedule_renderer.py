@@ -29,6 +29,7 @@ def rows() -> tuple[SimpleNamespace, ...]:
             air_date=date(2026, 8, 3),
             air_at=datetime(2026, 8, 3, 10, tzinfo=UTC),
             episode_label="04",
+            group_follow_count=3,
         ),
         SimpleNamespace(
             id=UUID("00000000-0000-0000-0000-000000000002"),
@@ -81,6 +82,26 @@ async def test_reuses_cached_weekly_calendar_png(tmp_path: Path) -> None:
     second = await renderer.render_weekly_cached(rows(), **kwargs)
 
     assert first.path == second.path
+
+
+@pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")
+async def test_separates_cached_schedule_by_group_heat_and_scope(tmp_path: Path) -> None:
+    renderer = ScheduleImageRenderer(
+        tmp_path / "schedules",
+        cjk_font_path=CJK_FONT,
+        mono_font_path=MONO_FONT,
+    )
+    kwargs = {
+        "timezone": ZoneInfo("Asia/Shanghai"),
+        "week_start": date(2026, 8, 2),
+        "week_end": date(2026, 8, 8),
+    }
+    cold = await renderer.render_weekly_cached(rows(), cache_scope="group-a", **kwargs)
+    hot_rows = tuple(SimpleNamespace(**{**vars(row), "group_follow_count": 4}) for row in rows())
+    hot = await renderer.render_weekly_cached(hot_rows, cache_scope="group-b", **kwargs)
+
+    assert cold.succeeded and hot.succeeded
+    assert cold.path != hot.path
 
 
 @pytest.mark.skipif(not CJK_FONT.exists(), reason="macOS CJK font unavailable")

@@ -10,6 +10,7 @@ from anime_qqbot.application.context import ChatContext
 from anime_qqbot.presentation.assembler import CardDataAssembler
 from anime_qqbot.presentation.models import CardScene, card_scene_allows_image
 from anime_qqbot.presentation.renderer import AnimeCardRenderer
+from anime_qqbot.presentation.subscription_presentation import SubscriptionPresentationReader
 from anime_qqbot.presentation.text import format_card_fallback
 
 from .adapter import Reply
@@ -24,10 +25,12 @@ class CardReplyFactory:
         assembler: CardDataAssembler,
         poster_locator: Callable[[UUID], Path | None],
         renderer: AnimeCardRenderer,
+        subscription_reader: SubscriptionPresentationReader,
     ) -> None:
         self._assembler = assembler
         self._poster_locator = poster_locator
         self._renderer = renderer
+        self._subscription_reader = subscription_reader
 
     async def build(
         self,
@@ -52,7 +55,24 @@ class CardReplyFactory:
             poster_path = self._poster_locator(anime_id)
             if poster_path is None:
                 return text_fallback
-            rendered = await self._renderer.render_cached(data, poster_path)
+            try:
+                subscriptions = await self._subscription_reader.read(
+                    ctx=ctx,
+                    anime_ids=(anime_id,),
+                    include_viewer_state=True,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "card_reply_factory.subscription_presentation_unavailable",
+                    extra={"error_type": type(exc).__name__},
+                )
+                subscriptions = None
+            rendered = await self._renderer.render_cached(
+                data,
+                poster_path,
+                viewer_follows=subscriptions.viewer_follows if subscriptions else False,
+                viewer_scope=subscriptions.viewer_scope if subscriptions else None,
+            )
             if not rendered.succeeded or rendered.path is None:
                 return text_fallback
             hint = (

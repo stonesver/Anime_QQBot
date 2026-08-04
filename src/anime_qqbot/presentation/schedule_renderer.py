@@ -32,7 +32,8 @@ GOLD = "#E6B65B"
 MINT = "#A3D5BF"
 PINK = "#D97597"
 LINE = "#3B5A5A"
-RENDER_VERSION = "calendar-v2"
+RENDER_VERSION = "calendar-v3"
+HOT_FOLLOW_THRESHOLD = 3
 
 
 class ScheduleImageRenderer:
@@ -59,6 +60,7 @@ class ScheduleImageRenderer:
         timezone: ZoneInfo,
         week_start: date,
         week_end: date,
+        cache_scope: str | None = None,
     ) -> RenderResult:
         return await self._render_cached(
             kind="weekly",
@@ -66,6 +68,7 @@ class ScheduleImageRenderer:
             timezone=timezone,
             range_start=week_start,
             range_end=week_end,
+            cache_scope=cache_scope,
             draw=lambda materialized, output_path: self._render_weekly(
                 materialized,
                 timezone=timezone,
@@ -81,6 +84,7 @@ class ScheduleImageRenderer:
         *,
         timezone: ZoneInfo,
         target_date: date,
+        cache_scope: str | None = None,
     ) -> RenderResult:
         return await self._render_cached(
             kind="daily",
@@ -88,6 +92,7 @@ class ScheduleImageRenderer:
             timezone=timezone,
             range_start=target_date,
             range_end=target_date,
+            cache_scope=cache_scope,
             draw=lambda materialized, output_path: self._render_daily(
                 materialized,
                 timezone=timezone,
@@ -104,6 +109,7 @@ class ScheduleImageRenderer:
         timezone: ZoneInfo,
         range_start: date,
         range_end: date,
+        cache_scope: str | None,
         draw: Callable[[tuple[Any, ...], Path], None],
     ) -> RenderResult:
         materialized = tuple(rows)
@@ -115,6 +121,7 @@ class ScheduleImageRenderer:
             timezone=timezone,
             range_start=range_start,
             range_end=range_end,
+            cache_scope=cache_scope,
         )
         output_path = self._render_root / kind / f"{fingerprint}.png"
         if _valid_cached_png(output_path):
@@ -183,6 +190,7 @@ class ScheduleImageRenderer:
         pending_time_font = _load_font(self._cjk_font_path, 17 if compact else 19)
         body_font = _load_font(self._cjk_font_path, 17 if compact else 19)
         chip_font = _load_font(self._mono_font_path, 14)
+        heat_font = _load_font(self._cjk_font_path, 13 if compact else 14)
         footer_font = _load_font(self._cjk_font_path, 18)
 
         draw.text((72, 48), "SEASONAL CALENDAR", fill=MUTED, font=label_font)
@@ -220,6 +228,7 @@ class ScheduleImageRenderer:
                 pending_time_font=pending_time_font,
                 body_font=body_font,
                 chip_font=chip_font,
+                heat_font=heat_font,
             )
 
         footer_y = canvas_height - footer_height + 20
@@ -275,6 +284,7 @@ class ScheduleImageRenderer:
         pending_time_font = _load_font(self._cjk_font_path, 21)
         body_font = _load_font(self._cjk_font_path, 23)
         chip_font = _load_font(self._mono_font_path, 16)
+        heat_font = _load_font(self._cjk_font_path, 15)
         footer_font = _load_font(self._cjk_font_path, 18)
 
         draw.text((72, 48), "DAILY BROADCAST", fill=MUTED, font=label_font)
@@ -307,6 +317,7 @@ class ScheduleImageRenderer:
                 pending_time_font=pending_time_font,
                 body_font=body_font,
                 chip_font=chip_font,
+                heat_font=heat_font,
             )
             y += row_height
         if pending_rows:
@@ -328,6 +339,7 @@ class ScheduleImageRenderer:
                     pending_time_font=pending_time_font,
                     body_font=body_font,
                     chip_font=chip_font,
+                    heat_font=heat_font,
                 )
                 y += row_height
         draw.text(
@@ -356,6 +368,7 @@ def _draw_weekly_day(
     pending_time_font: FreeTypeFont,
     body_font: FreeTypeFont,
     chip_font: FreeTypeFont,
+    heat_font: FreeTypeFont,
 ) -> None:
     border = GOLD if is_today else LINE
     draw.rounded_rectangle(
@@ -381,6 +394,7 @@ def _draw_weekly_day(
             pending_time_font=pending_time_font,
             body_font=body_font,
             chip_font=chip_font,
+            heat_font=heat_font,
         )
         card_y += card_height + 10
 
@@ -398,6 +412,7 @@ def _draw_weekly_card(
     pending_time_font: FreeTypeFont,
     body_font: FreeTypeFont,
     chip_font: FreeTypeFont,
+    heat_font: FreeTypeFont,
 ) -> None:
     air_at = getattr(row, "air_at", None)
     accent = GOLD if air_at is not None else MINT
@@ -416,6 +431,11 @@ def _draw_weekly_card(
     _draw_chip(draw, chip_left, y + 8, episode_label, accent, chip_font)
     title = _fit_text(draw, title, font=body_font, max_width=width - 22)
     draw.text((x + 11, y + 38), title, fill=TEXT, font=body_font)
+    follow_count = _group_follow_count(row)
+    if follow_count >= HOT_FOLLOW_THRESHOLD:
+        heat_y = y + 59 if height >= 88 else y + 8
+        heat_x = x + 11 if height >= 88 else x + 78
+        _draw_heat_badge(draw, heat_x, heat_y, follow_count, heat_font)
 
 
 def _draw_daily_section(
@@ -442,6 +462,7 @@ def _draw_daily_row(
     pending_time_font: FreeTypeFont,
     body_font: FreeTypeFont,
     chip_font: FreeTypeFont,
+    heat_font: FreeTypeFont,
 ) -> None:
     air_at = getattr(row, "air_at", None)
     time_label = air_at.astimezone(timezone).strftime("%H:%M") if air_at else "待定"
@@ -459,6 +480,9 @@ def _draw_daily_row(
     title = _fit_text(draw, title, font=body_font, max_width=chip_left - 178)
     draw.text((178, y + 19), title, fill=TEXT, font=body_font)
     _draw_chip(draw, chip_left, y + 15, episode_label, accent, chip_font)
+    follow_count = _group_follow_count(row)
+    if follow_count >= HOT_FOLLOW_THRESHOLD:
+        _draw_heat_badge(draw, 178, y + 43, follow_count, heat_font)
 
 
 def _draw_badge(
@@ -490,6 +514,30 @@ def _draw_chip(
 def _chip_width(draw: ImageDraw.ImageDraw, label: str, font: FreeTypeFont) -> int:
     bounds = draw.textbbox((0, 0), label, font=font)
     return bounds[2] - bounds[0] + 20
+
+
+def _draw_heat_badge(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    count: int,
+    font: FreeTypeFont,
+) -> None:
+    label = f"{count} 人追"
+    bounds = draw.textbbox((0, 0), label, font=font)
+    width = bounds[2] - bounds[0] + 30
+    draw.rounded_rectangle((x, y, x + width, y + 21), radius=10, fill="#713C50")
+    draw.rounded_rectangle((x, y, x + width, y + 21), radius=10, outline="#F099B7", width=1)
+    draw.polygon(
+        ((x + 11, y + 10), (x + 15, y + 4), (x + 19, y + 10), (x + 15, y + 16)),
+        fill="#FFD6E3",
+    )
+    draw.text((x + 24, y + 3), label, fill="#FFD6E3", font=font)
+
+
+def _group_follow_count(row: Any) -> int:
+    value = getattr(row, "group_follow_count", 0)
+    return value if isinstance(value, int) and value >= 0 else 0
 
 
 def _draw_background(draw: ImageDraw.ImageDraw, width: int, height: int) -> None:
@@ -530,6 +578,7 @@ def _fingerprint(
     timezone: ZoneInfo,
     range_start: date,
     range_end: date,
+    cache_scope: str | None,
 ) -> str:
     payload = {
         "layout": RENDER_VERSION,
@@ -537,6 +586,7 @@ def _fingerprint(
         "timezone": timezone.key,
         "range_start": range_start.isoformat(),
         "range_end": range_end.isoformat(),
+        "cache_scope": cache_scope,
         "rows": [_row_fingerprint(row) for row in rows],
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
@@ -551,6 +601,7 @@ def _row_fingerprint(row: Any) -> dict[str, object]:
         "date": air_date.isoformat() if air_date is not None else None,
         "at": air_at.isoformat() if air_at is not None else None,
         "episode": getattr(row, "episode_label", None),
+        "group_follow_count": _group_follow_count(row),
     }
 
 

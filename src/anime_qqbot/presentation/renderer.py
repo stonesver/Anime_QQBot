@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import secrets
@@ -20,6 +22,7 @@ POSTER_SIZE = (400, 600)
 PAPER = "#F7FAFF"
 SIGNAL_BLUE = "#365FC7"
 ON_AIR_RED = "#FF5D57"
+FOLLOW_GOLD = "#E6B65B"
 INK = "#17223B"
 MIST_BLUE = "#E9EFFD"
 
@@ -52,9 +55,12 @@ class AnimeCardRenderer:
         self,
         data: AnimeCardData,
         poster_path: Path,
+        *,
+        viewer_follows: bool = False,
+        viewer_scope: str | None = None,
     ) -> RenderResult:
         output_dir = self._render_root / str(data.anime_id)
-        output_path = output_dir / f"{data.projection_fingerprint}.png"
+        output_path = output_dir / f"{_cache_fingerprint(data, viewer_follows, viewer_scope)}.png"
         if _valid_cached_png(output_path):
             os.utime(output_path, None)
             return RenderResult(output_path)
@@ -65,7 +71,13 @@ class AnimeCardRenderer:
                 return RenderResult(output_path)
             try:
                 output_dir.mkdir(parents=True, exist_ok=True)
-                await asyncio.to_thread(self._render, data, poster_path, output_path)
+                await asyncio.to_thread(
+                    self._render,
+                    data,
+                    poster_path,
+                    output_path,
+                    viewer_follows,
+                )
                 if not _valid_cached_png(output_path):
                     output_path.unlink(missing_ok=True)
                     return RenderResult(None, "invalid_rendered_png")
@@ -90,6 +102,7 @@ class AnimeCardRenderer:
         data: AnimeCardData,
         poster_path: Path,
         output_path: Path,
+        viewer_follows: bool,
     ) -> None:
         with Image.open(poster_path) as source:
             poster = source.convert("RGB")
@@ -182,6 +195,8 @@ class AnimeCardRenderer:
             chip_x += width + 10
         draw.rounded_rectangle((876, 30, 960, 63), radius=10, fill=ON_AIR_RED)
         draw.text((890, 37), "ON AIR", fill="white", font=mono_small)
+        if viewer_follows:
+            _draw_following_seal(draw, x=768, y=30, font=small_font)
         draw.line((440, 558, 960, 558), fill=SIGNAL_BLUE, width=3)
         draw.text((440, 568), "ANIME BROADCAST SIGNAL", fill=SIGNAL_BLUE, font=mono_small)
 
@@ -262,6 +277,37 @@ def _load_font(path: Path, size: int) -> FreeTypeFont:
     if not path.is_file():
         raise OSError(f"required font is missing: {path.name}")
     return ImageFont.truetype(str(path), size=size)
+
+
+def _draw_following_seal(
+    draw: ImageDraw.ImageDraw,
+    *,
+    x: int,
+    y: int,
+    font: FreeTypeFont,
+) -> None:
+    draw.rounded_rectangle(
+        (x, y, x + 94, y + 33),
+        radius=10,
+        fill=FOLLOW_GOLD,
+        outline="#B98727",
+        width=2,
+    )
+    draw.text((x + 13, y + 6), "追番中", fill=INK, font=font)
+
+
+def _cache_fingerprint(
+    data: AnimeCardData,
+    viewer_follows: bool,
+    viewer_scope: str | None,
+) -> str:
+    payload = {
+        "layout": "card-subscription-v1",
+        "projection": data.projection_fingerprint,
+        "viewer_follows": viewer_follows,
+        "viewer_scope": viewer_scope,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def _valid_cached_png(path: Path) -> bool:

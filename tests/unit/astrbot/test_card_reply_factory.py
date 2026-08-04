@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from anime_qqbot.application.context import ChatContext
 from anime_qqbot.presentation.models import AnimeCardData, CardScene
 from anime_qqbot.presentation.renderer import RenderResult
+from anime_qqbot.presentation.subscription_presentation import SubscriptionPresentation
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import Reply
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.card_reply_factory import (
     CardReplyFactory,
@@ -29,8 +30,19 @@ class Renderer:
     def __init__(self, result: RenderResult) -> None:
         self.result = result
 
-    async def render_cached(self, data, poster_path):
+    async def render_cached(self, data, poster_path, **kwargs):
+        self.kwargs = kwargs
         return self.result
+
+
+class SubscriptionReader:
+    def __init__(self, presentation: SubscriptionPresentation | Exception) -> None:
+        self.presentation = presentation
+
+    async def read(self, **kwargs) -> SubscriptionPresentation:
+        if isinstance(self.presentation, Exception):
+            raise self.presentation
+        return self.presentation
 
 
 def data(anime_id: UUID) -> AnimeCardData:
@@ -74,6 +86,7 @@ async def test_returns_image_and_one_line_hint_when_local_render_succeeds(
         assembler=Assembler(data(anime_id)),  # type: ignore[arg-type]
         poster_locator=lambda _anime_id: poster,
         renderer=Renderer(RenderResult(card)),  # type: ignore[arg-type]
+        subscription_reader=SubscriptionReader(SubscriptionPresentation.empty()),  # type: ignore[arg-type]
     )
 
     reply = await factory.build(
@@ -95,6 +108,7 @@ async def test_missing_poster_returns_complete_structured_text(tmp_path: Path) -
         assembler=Assembler(data(anime_id)),  # type: ignore[arg-type]
         poster_locator=lambda _anime_id: None,
         renderer=Renderer(RenderResult(tmp_path / "unused.png")),  # type: ignore[arg-type]
+        subscription_reader=SubscriptionReader(SubscriptionPresentation.empty()),  # type: ignore[arg-type]
     )
 
     reply = await factory.build(
@@ -111,3 +125,62 @@ async def test_missing_poster_returns_complete_structured_text(tmp_path: Path) -
     assert "全 12 集" in reply.blocks[0].text
     assert "待定 · 暂无已知下一集" in reply.blocks[0].text
     assert all(block.image_path is None for block in reply.blocks)
+
+
+async def test_passes_current_viewer_follow_state_to_renderer(tmp_path: Path) -> None:
+    anime_id = uuid4()
+    poster = tmp_path / "poster.png"
+    card = tmp_path / "card.png"
+    poster.touch()
+    card.touch()
+    renderer = Renderer(RenderResult(card))
+    factory = CardReplyFactory(
+        assembler=Assembler(data(anime_id)),  # type: ignore[arg-type]
+        poster_locator=lambda _anime_id: poster,
+        renderer=renderer,  # type: ignore[arg-type]
+        subscription_reader=SubscriptionReader(
+            SubscriptionPresentation(
+                group_scope="group-scope",
+                viewer_scope="viewer-scope",
+                viewer_follows=True,
+                group_follow_counts={},
+            )
+        ),  # type: ignore[arg-type]
+    )
+
+    reply = await factory.build(
+        scene=CardScene.DETAIL,
+        anime_id=anime_id,
+        ctx=context(),
+        fallback=Reply.from_text("fallback"),
+        now=datetime(2026, 7, 29, tzinfo=UTC),
+    )
+
+    assert reply.kind == "image"
+    assert renderer.kwargs == {"viewer_follows": True, "viewer_scope": "viewer-scope"}
+
+
+async def test_subscription_presentation_failure_keeps_base_card(tmp_path: Path) -> None:
+    anime_id = uuid4()
+    poster = tmp_path / "poster.png"
+    card = tmp_path / "card.png"
+    poster.touch()
+    card.touch()
+    renderer = Renderer(RenderResult(card))
+    factory = CardReplyFactory(
+        assembler=Assembler(data(anime_id)),  # type: ignore[arg-type]
+        poster_locator=lambda _anime_id: poster,
+        renderer=renderer,  # type: ignore[arg-type]
+        subscription_reader=SubscriptionReader(RuntimeError("database unavailable")),  # type: ignore[arg-type]
+    )
+
+    reply = await factory.build(
+        scene=CardScene.DETAIL,
+        anime_id=anime_id,
+        ctx=context(),
+        fallback=Reply.from_text("fallback"),
+        now=datetime(2026, 7, 29, tzinfo=UTC),
+    )
+
+    assert reply.kind == "image"
+    assert renderer.kwargs == {"viewer_follows": False, "viewer_scope": None}
