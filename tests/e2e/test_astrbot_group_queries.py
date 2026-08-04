@@ -18,6 +18,7 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -661,6 +662,85 @@ async def test_real_today_listing_filters_nsfw(async_engine: AsyncEngine) -> Non
     assert reply.kind == "text"
     assert "安全番剧" in reply.blocks[0].text
     assert "成人番剧" not in reply.blocks[0].text
+
+
+@pytest.mark.asyncio
+async def test_today_listing_coalesces_same_title_and_day_to_newest_episode(
+    async_engine: AsyncEngine,
+) -> None:
+    from anime_qqbot.application.use_cases import today_listing
+    from anime_qqbot.persistence.models.catalog import (
+        AiringOccurrenceRow,
+        Anime,
+        ExternalEntry,
+    )
+
+    factory = _sessions_for(async_engine)
+    now = datetime(2026, 8, 4, tzinfo=UTC)
+    source_id = uuid4()
+    target_day = datetime(2026, 8, 7, tzinfo=UTC).date()
+    async with factory() as session, session.begin():
+        session.add_all(
+            [
+                Anime(
+                    id=SAMPLE_ANIME_ID,
+                    display_title="同日连更",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                Anime(
+                    id=SECOND_ANIME_ID,
+                    display_title="同日连更",
+                    nsfw_flag="false",
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=source_id,
+                    provider="bangumi",
+                    external_id="same-day",
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SECOND_ANIME_ID,
+                    source_entry_id=source_id,
+                    episode_label="06",
+                    air_date=target_day,
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="same-day-06",
+                    updated_at=now,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=SAMPLE_ANIME_ID,
+                    source_entry_id=source_id,
+                    episode_label="07",
+                    air_date=target_day,
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key="same-day-07",
+                    updated_at=now,
+                ),
+            ]
+        )
+
+    result = await today_listing(
+        factory,
+        target_date=target_day,
+        timezone=ZoneInfo("Asia/Shanghai"),
+    )
+
+    assert len(result.rows) == 1
+    assert result.rows[0].display_title == "同日连更"
+    assert result.rows[0].episode_label == "07"
 
 
 @pytest.mark.asyncio

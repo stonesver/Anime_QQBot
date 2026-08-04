@@ -36,3 +36,5 @@ def test_page_covers_all_operations_sections_and_mobile() -> None:
     assert 'apiGet("catalog"' in script
     assert "catalog_animes" in script
     assert "future_exact_animes" in script
+    assert "future_unmapped_anilist_animes" in script
+    assert "future_mapped_without_exact_animes" in script

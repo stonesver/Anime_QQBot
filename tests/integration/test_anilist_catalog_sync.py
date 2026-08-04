@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -18,6 +18,7 @@ from anime_qqbot.catalog.sync_anilist import AniListSyncService
 from anime_qqbot.clock import FrozenClock
 from anime_qqbot.persistence.models.catalog import (
     AiringOccurrenceRow,
+    AniListMappingAssessment,
     Anime,
     AnimeSourceLink,
     ExternalEntry,
@@ -366,3 +367,153 @@ async def test_discovery_confirms_unique_exact_known_title_and_air_date(
     assert link.evidence_type == "title_season_year"
     assert stub.search_calls == list(expected_searches)
     assert stub.calls == [128757]
+
+
+async def _seed_discovery_target(
+    session_factory,
+    *,
+    anime_id: UUID,
+    entry_id: UUID,
+    title: str,
+    air_date: date,
+    next_air_date: date,
+    now: datetime,
+) -> None:
+    async with session_factory() as session, session.begin():
+        session.add_all(
+            [
+                Anime(
+                    id=anime_id,
+                    nsfw_flag="false",
+                    disabled=False,
+                    display_title=title,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                ExternalEntry(
+                    id=entry_id,
+                    provider="bangumi",
+                    external_id=str(entry_id),
+                    url=None,
+                    disabled=False,
+                    created_at=now,
+                    updated_at=now,
+                ),
+                AnimeSourceLink(
+                    id=uuid4(),
+                    anime_id=anime_id,
+                    external_entry_id=entry_id,
+                    status="confirmed",
+                    evidence_type="manual",
+                    confidence=1.0,
+                    method="fixture",
+                    created_at=now,
+                ),
+                SourceSnapshot(
+                    id=uuid4(),
+                    external_entry_id=entry_id,
+                    version=1,
+                    payload={
+                        "title_jp": title,
+                        "title_cn": title,
+                        "air_date": air_date.isoformat(),
+                    },
+                    source_time=now,
+                    fetched_at=now,
+                    expires_at=None,
+                ),
+                AiringOccurrenceRow(
+                    id=uuid4(),
+                    anime_id=anime_id,
+                    source_entry_id=entry_id,
+                    episode_label="01",
+                    air_date=next_air_date,
+                    air_at=None,
+                    precision="date_only",
+                    source_event_key=f"fixture-{anime_id}",
+                    updated_at=now,
+                ),
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_discovery_prioritizes_unmapped_shows_airing_within_seven_days(
+    session_factory,
+) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    near_id = UUID("00000000-0000-0000-0000-000000000002")
+    later_id = UUID("00000000-0000-0000-0000-000000000001")
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=near_id,
+        entry_id=uuid4(),
+        title="近期优先",
+        air_date=date(2026, 7, 1),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=later_id,
+        entry_id=uuid4(),
+        title="目录游标靠前",
+        air_date=date(2026, 7, 1),
+        next_air_date=date(2026, 8, 20),
+        now=now,
+    )
+    candidate = AnimeSummary(
+        subject_id=991,
+        title_cn="近期优先",
+        title_jp="近期优先",
+        air_date=date(2026, 7, 1),
+        nsfw=False,
+    )
+    stub = _StubAniList({991: _detail(991)}, searches={"近期优先": [candidate]})
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    result = await discovery.run_once(limit=1)
+
+    assert result.rows_processed == 1
+    assert result.links_confirmed == 1
+    assert stub.search_calls == ["近期优先"]
+
+
+@pytest.mark.asyncio
+async def test_discovery_records_no_candidate_and_respects_retry_cooldown(session_factory) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    anime_id = uuid4()
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=anime_id,
+        entry_id=uuid4(),
+        title="严格匹配不到",
+        air_date=date(2026, 7, 1),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    stub = _StubAniList({})
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    first = await discovery.run_once(limit=1)
+    second = await discovery.run_once(limit=1)
+
+    assert first.rows_processed == 1
+    assert second.rows_processed == 0
+    assert stub.search_calls == ["严格匹配不到"]
+    async with session_factory() as session:
+        assessment = await session.get(AniListMappingAssessment, anime_id)
+    assert assessment is not None
+    assert assessment.status == "no_candidate"
+    assert assessment.reason == "no_exact_candidate"
+    assert assessment.retry_after == now + timedelta(days=1)

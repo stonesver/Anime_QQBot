@@ -82,9 +82,10 @@ async function loadOverview(showLoading = true) {
     const metrics = [
       ["已同步番剧", data.catalog_animes], ["AniList 映射", `${data.anilist_mapped}/${data.catalog_animes}`],
       ["未来有计划", data.future_airing_animes], ["精确时刻", `${data.future_exact_animes}/${data.future_airing_animes}`],
+      ["待 AniList 映射", data.future_unmapped_anilist_animes], ["已映射·源未给时刻", data.future_mapped_without_exact_animes],
       ["已登记群", data.groups], ["有效订阅", data.subscriptions],
       ["等待通知", data.pending_notifications], ["异常通知", data.failed_notifications],
-      ["待确认映射", data.pending_mappings],
+      ["人工待确认映射", data.pending_mappings],
     ];
     $("#overview-grid").innerHTML = metrics.map(([label, value]) =>
       `<article class="metric"><span>${label}</span><strong>${value}</strong></article>`
@@ -158,14 +159,26 @@ async function loadMappings() {
   loading("#mappings-content");
   try {
     const data = await bridge.apiGet("mappings", { page: 1, page_size: 50 });
-    if (!data.items.length) return $("#mappings-content").innerHTML = empty("没有待确认映射。");
-    $("#mappings-content").innerHTML = `<table><thead><tr><th>番剧</th><th>来源</th><th>置信度</th><th>证据</th><th>操作</th></tr></thead><tbody>${
-      data.items.map((item) => `<tr><td>${escapeHtml(item.anime_title)}</td><td>${escapeHtml(item.provider)} · ${escapeHtml(item.external_id)}</td>
-      <td>${Math.round(item.confidence * 100)}%</td><td>${escapeHtml(item.evidence_type)} / ${escapeHtml(item.method)}</td>
-      <td><div class="action-row"><button class="button small" data-map="${item.id}" data-decision="confirmed">确认</button>
-      <button class="button small danger" data-map="${item.id}" data-decision="rejected">拒绝</button></div></td></tr>`).join("")
+    if (!data.items.length) return $("#mappings-content").innerHTML = empty("还没有需要展示的映射状态。");
+    $("#mappings-content").innerHTML = `<table><thead><tr><th>番剧</th><th>来源</th><th>状态</th><th>证据 / 原因</th><th>操作</th></tr></thead><tbody>${
+      data.items.map((item) => `<tr><td>${escapeHtml(item.anime_title)}</td><td>${escapeHtml(item.provider)}${item.external_id !== "—" ? ` · ${escapeHtml(item.external_id)}` : ""}</td>
+      <td>${item.kind === "assessment" ? escapeHtml(mappingOutcome(item.status, item.candidate_count)) : `${Math.round(item.confidence * 100)}%`}</td><td>${escapeHtml(mappingEvidence(item))}</td>
+      <td>${item.kind === "assessment" ? "自动比对将在冷却后重试" : `<div class="action-row"><button class="button small" data-map="${item.id}" data-decision="confirmed">确认</button>
+      <button class="button small danger" data-map="${item.id}" data-decision="rejected">拒绝</button></div>`}</td></tr>`).join("")
     }</tbody></table>`;
   } catch (reason) { error("#mappings-content", reason); }
+}
+
+function mappingOutcome(statusName, candidateCount) {
+  const labels = { no_candidate: "未找到候选", ambiguous: "候选不唯一", missing_source_metadata: "源数据不完整", sync_failed: "候选同步失败" };
+  const label = labels[statusName] || statusName;
+  return Number.isInteger(candidateCount) ? `${label}（${candidateCount}）` : label;
+}
+
+function mappingEvidence(item) {
+  if (item.kind !== "assessment") return `${item.evidence_type} / ${item.method}`;
+  const labels = { no_exact_candidate: "无标题与首播日均精确匹配的候选", multiple_exact_candidates: "多个候选同时满足严格条件", missing_bangumi_title_or_air_date: "Bangumi 缺少日文标题或首播日", candidate_sync_failed: "AniList 候选详情未能同步" };
+  return `${labels[item.evidence_type] || item.evidence_type}；最近尝试 ${formatTime(item.attempted_at)}`;
 }
 
 async function loadNotifications() {

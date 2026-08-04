@@ -13,6 +13,7 @@ tables and the chat_groups / group_memberships tables.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID, uuid4
@@ -350,8 +351,29 @@ async def _airing_rows_between(
         current = selected.get(key)
         if current is None or (current[0].air_at is None and occurrence.air_at is not None):
             selected[key] = (occurrence, anime)
+    # A source can place consecutive episodes of a daily show on the same date.
+    # The calendar is a "what is current today" view, so show one card per
+    # normalized title/day and keep the newest numbered episode. This also
+    # protects presentation from duplicate internal Anime rows that share a title.
+    selected_by_title: dict[tuple[date, str], tuple[AiringOccurrenceRow, Anime]] = {}
+    for occurrence, anime in selected.values():
+        local_day = (
+            occurrence.air_at.astimezone(timezone).date()
+            if occurrence.air_at is not None
+            else occurrence.air_date
+        )
+        title = anime.display_title
+        title_key = (
+            "".join(unicodedata.normalize("NFKC", title).casefold().split())
+            if isinstance(title, str) and title.strip()
+            else str(anime.id)
+        )
+        key = (local_day, title_key)
+        current = selected_by_title.get(key)
+        if current is None or _schedule_row_rank(occurrence) > _schedule_row_rank(current[0]):
+            selected_by_title[key] = (occurrence, anime)
     chosen_rows = sorted(
-        selected.values(),
+        selected_by_title.values(),
         key=lambda row: (
             (
                 row[0].air_at.astimezone(timezone).date()
@@ -378,6 +400,15 @@ async def _airing_rows_between(
         for occ, anime in chosen_rows
     )
     return anime_rows
+
+
+def _schedule_row_rank(occurrence: AiringOccurrenceRow) -> tuple[int, bool, datetime]:
+    """Prefer the newest episode, then an exact time, for one title/day card."""
+    return (
+        _episode_number(occurrence.episode_label) or -1,
+        occurrence.air_at is not None,
+        occurrence.air_at or datetime.min.replace(tzinfo=UTC),
+    )
 
 
 async def season_listing(

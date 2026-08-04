@@ -19,6 +19,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -190,10 +191,29 @@ class SourceSyncState(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AniListMappingAssessment(Base):
+    """Latest strict AniList mapping outcome for one internal anime."""
+
+    __tablename__ = "anilist_mapping_assessments"
+    __table_args__ = (Index("ix_anilist_mapping_assessments_retry_after", "retry_after"),)
+
+    anime_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("animes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str] = mapped_column(String(128), nullable=False)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retry_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # Re-export TimestampMixin for downstream models that import from here.
 __all__ = [
     "AiringOccurrenceRow",
     "AiringSchedule",  # legacy v0.1
+    "AniListMappingAssessment",
     "Anime",
     "AnimeSourceLink",
     "AnimeSubject",  # legacy v0.1, retained for the duration of the shard

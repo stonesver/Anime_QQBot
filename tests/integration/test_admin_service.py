@@ -16,6 +16,7 @@ from anime_qqbot.operations.runtime_status_repository import (
 )
 from anime_qqbot.persistence.models.catalog import (
     AiringOccurrenceRow,
+    AniListMappingAssessment,
     Anime,
     AnimeSourceLink,
     ExternalEntry,
@@ -231,6 +232,8 @@ async def test_admin_catalog_exposes_sync_and_airing_coverage(
     assert overview["anilist_mapped"] == 1
     assert overview["future_airing_animes"] == 2
     assert overview["future_exact_animes"] == 1
+    assert overview["future_mapped_without_exact_animes"] == 0
+    assert overview["future_unmapped_anilist_animes"] == 1
     assert catalog["total"] == 1
     assert catalog["items"] == [
         {
@@ -243,6 +246,52 @@ async def test_admin_catalog_exposes_sync_and_airing_coverage(
             "next_episode": "04",
             "precision": "exact",
             "last_synced_at": "2026-07-30T01:00:00+00:00",
+        }
+    ]
+
+
+async def test_admin_mapping_status_exposes_strict_auto_match_failure(session_factory) -> None:
+    now = datetime(2026, 8, 4, tzinfo=UTC)
+    anime_id = uuid4()
+    async with session_factory() as session, session.begin():
+        session.add(
+            Anime(
+                id=anime_id,
+                nsfw_flag="false",
+                disabled=False,
+                display_title="无精确候选",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.flush()
+        session.add(
+            AniListMappingAssessment(
+                anime_id=anime_id,
+                status="no_candidate",
+                reason="no_exact_candidate",
+                candidate_count=0,
+                attempted_at=now,
+                retry_after=now + timedelta(days=1),
+            )
+        )
+
+    result = await AdminService(session_factory).mappings()
+
+    assert result["total"] == 1
+    assert result["items"] == [
+        {
+            "kind": "assessment",
+            "id": str(anime_id),
+            "anime_title": "无精确候选",
+            "provider": "anilist",
+            "external_id": "—",
+            "status": "no_candidate",
+            "confidence": None,
+            "evidence_type": "no_exact_candidate",
+            "method": "anilist_exact_native_date_v1",
+            "candidate_count": 0,
+            "attempted_at": "2026-08-04T00:00:00+00:00",
         }
     ]
 

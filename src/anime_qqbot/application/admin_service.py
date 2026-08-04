@@ -24,6 +24,7 @@ from anime_qqbot.operations.runtime_status_repository import (
 )
 from anime_qqbot.persistence.models.catalog import (
     AiringOccurrenceRow,
+    AniListMappingAssessment,
     Anime,
     AnimeSourceLink,
     ExternalEntry,
@@ -76,6 +77,8 @@ class AdminService:
                 anilist_mapped,
                 future_airing_animes,
                 future_exact_animes,
+                future_mapped_without_exact_animes,
+                future_unmapped_anilist_animes,
             ) = (
                 await session.scalar(select(func.count()).select_from(ChatGroup)),
                 await session.scalar(select(func.count()).select_from(FollowSubscription)),
@@ -121,6 +124,56 @@ class AdminService:
                     .where(Anime.disabled.is_(False))
                     .where(AiringOccurrenceRow.air_at >= now)
                 ),
+                await session.scalar(
+                    select(func.count(func.distinct(AiringOccurrenceRow.anime_id)))
+                    .select_from(AiringOccurrenceRow)
+                    .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
+                    .where(Anime.disabled.is_(False))
+                    .where(future_condition)
+                    .where(
+                        Anime.id.in_(
+                            select(AnimeSourceLink.anime_id)
+                            .join(
+                                ExternalEntry,
+                                ExternalEntry.id == AnimeSourceLink.external_entry_id,
+                            )
+                            .where(AnimeSourceLink.status == "confirmed")
+                            .where(ExternalEntry.provider == "anilist")
+                        )
+                    )
+                    .where(
+                        ~Anime.id.in_(
+                            select(AiringOccurrenceRow.anime_id).where(
+                                AiringOccurrenceRow.air_at >= now
+                            )
+                        )
+                    )
+                ),
+                await session.scalar(
+                    select(func.count(func.distinct(AiringOccurrenceRow.anime_id)))
+                    .select_from(AiringOccurrenceRow)
+                    .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
+                    .where(Anime.disabled.is_(False))
+                    .where(future_condition)
+                    .where(
+                        ~Anime.id.in_(
+                            select(AnimeSourceLink.anime_id)
+                            .join(
+                                ExternalEntry,
+                                ExternalEntry.id == AnimeSourceLink.external_entry_id,
+                            )
+                            .where(AnimeSourceLink.status == "confirmed")
+                            .where(ExternalEntry.provider == "anilist")
+                        )
+                    )
+                    .where(
+                        ~Anime.id.in_(
+                            select(AiringOccurrenceRow.anime_id).where(
+                                AiringOccurrenceRow.air_at >= now
+                            )
+                        )
+                    )
+                ),
             )
         controls = await self._controls.list_controls()
         napcat = await self._runtime_status.get("napcat")
@@ -135,6 +188,8 @@ class AdminService:
             "anilist_mapped": int(anilist_mapped or 0),
             "future_airing_animes": int(future_airing_animes or 0),
             "future_exact_animes": int(future_exact_animes or 0),
+            "future_mapped_without_exact_animes": int(future_mapped_without_exact_animes or 0),
+            "future_unmapped_anilist_animes": int(future_unmapped_anilist_animes or 0),
             "delivery_paused": any(not row.allows_delivery for row in controls),
             "napcat_status": {
                 "status": napcat.status.value if napcat is not None else "unknown",
@@ -399,10 +454,7 @@ class AdminService:
         page, page_size = _page(page, page_size)
         condition = AnimeSourceLink.status.in_(("unresolved", "probable"))
         async with self._sessions() as session:
-            total = await session.scalar(
-                select(func.count()).select_from(AnimeSourceLink).where(condition)
-            )
-            rows = (
+            link_rows = (
                 await session.execute(
                     select(AnimeSourceLink, Anime, ExternalEntry)
                     .join(Anime, Anime.id == AnimeSourceLink.anime_id)
@@ -412,12 +464,18 @@ class AdminService:
                     )
                     .where(condition)
                     .order_by(AnimeSourceLink.confidence.desc())
-                    .offset((page - 1) * page_size)
-                    .limit(page_size)
                 )
             ).all()
-        items = [
+            assessment_rows = (
+                await session.execute(
+                    select(AniListMappingAssessment, Anime)
+                    .join(Anime, Anime.id == AniListMappingAssessment.anime_id)
+                    .order_by(AniListMappingAssessment.attempted_at.desc())
+                )
+            ).all()
+        items: list[dict[str, object]] = [
             {
+                "kind": "link",
                 "id": str(link.id),
                 "anime_title": anime.display_title or "未命名番剧",
                 "provider": external.provider,
@@ -427,9 +485,27 @@ class AdminService:
                 "evidence_type": link.evidence_type,
                 "method": link.method,
             }
-            for link, anime, external in rows
+            for link, anime, external in link_rows
         ]
-        return _collection(items, int(total or 0), page, page_size)
+        items.extend(
+            {
+                "kind": "assessment",
+                "id": str(assessment.anime_id),
+                "anime_title": anime.display_title or "未命名番剧",
+                "provider": "anilist",
+                "external_id": "—",
+                "status": assessment.status,
+                "confidence": None,
+                "evidence_type": assessment.reason,
+                "method": "anilist_exact_native_date_v1",
+                "candidate_count": assessment.candidate_count,
+                "attempted_at": assessment.attempted_at.isoformat(),
+            }
+            for assessment, anime in assessment_rows
+        )
+        total = len(items)
+        offset = (page - 1) * page_size
+        return _collection(items[offset : offset + page_size], total, page, page_size)
 
     async def notifications(
         self,
