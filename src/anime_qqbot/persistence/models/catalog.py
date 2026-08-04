@@ -209,11 +209,37 @@ class AniListMappingAssessment(Base):
     retry_after: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AniListMappingPolicy(Base):
+    """Singleton runtime policy shared by the plugin admin page and worker."""
+
+    __tablename__ = "anilist_mapping_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "query_budget >= 1 AND query_budget <= 30", name="ck_anilist_policy_budget"
+        ),
+        CheckConstraint(
+            "priority_window_days >= 1 AND priority_window_days <= 14",
+            name="ck_anilist_policy_window",
+        ),
+        CheckConstraint(
+            "retry_cooldown_hours >= 1 AND retry_cooldown_hours <= 168",
+            name="ck_anilist_policy_cooldown",
+        ),
+    )
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    query_budget: Mapped[int] = mapped_column(Integer, nullable=False)
+    priority_window_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    retry_cooldown_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 # Re-export TimestampMixin for downstream models that import from here.
 __all__ = [
     "AiringOccurrenceRow",
     "AiringSchedule",  # legacy v0.1
     "AniListMappingAssessment",
+    "AniListMappingPolicy",
     "Anime",
     "AnimeSourceLink",
     "AnimeSubject",  # legacy v0.1, retained for the duration of the shard

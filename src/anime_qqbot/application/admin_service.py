@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from anime_qqbot.catalog.anilist_mapping_policy import AniListMappingPolicyRepository
 from anime_qqbot.groups.repository_v2 import ChatGroupRepository
 from anime_qqbot.groups.settings import (
     GroupRuntimePolicy,
@@ -55,6 +56,7 @@ class AdminService:
         self._jobs = OperatorJobRepository(sessions)
         self._audit = AdminAuditRepository(sessions)
         self._runtime_status = RuntimeComponentStatusRepository(sessions)
+        self._anilist_mapping_policy = AniListMappingPolicyRepository(sessions)
 
     async def overview(self) -> dict[str, object]:
         now = datetime.now(UTC)
@@ -562,6 +564,73 @@ class AdminService:
             }
             for row in rows
         ]
+
+    async def mapping_policy(self) -> dict[str, object]:
+        policy = await self._anilist_mapping_policy.get()
+        async with self._sessions() as session:
+            state = await session.get(SourceSyncState, "anilist")
+            outcomes = (
+                await session.execute(
+                    select(AniListMappingAssessment.reason, func.count())
+                    .group_by(AniListMappingAssessment.reason)
+                    .order_by(AniListMappingAssessment.reason)
+                )
+            ).all()
+        return {
+            "query_budget": policy.query_budget,
+            "priority_window_days": policy.priority_window_days,
+            "retry_cooldown_hours": policy.retry_cooldown_hours,
+            "matching_rule": "strict_title_first_air_date_unique",
+            "last_success_at": _iso(state.last_success_at) if state else None,
+            "last_error": _safe_error(state.last_error) if state else None,
+            "assessment_counts": {str(reason): int(count) for reason, count in outcomes},
+        }
+
+    async def update_mapping_policy(
+        self,
+        *,
+        actor: str,
+        query_budget: object,
+        priority_window_days: object,
+        retry_cooldown_hours: object,
+    ) -> dict[str, object]:
+        values = {
+            "query_budget": query_budget,
+            "priority_window_days": priority_window_days,
+            "retry_cooldown_hours": retry_cooldown_hours,
+        }
+        limits = {
+            "query_budget": (1, 30),
+            "priority_window_days": (1, 14),
+            "retry_cooldown_hours": (1, 168),
+        }
+        parsed: dict[str, int] = {}
+        for name, value in values.items():
+            low, high = limits[name]
+            if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+                raise AdminValidationError(f"{name} must be an integer between {low} and {high}")
+            parsed[name] = value
+        before = await self._anilist_mapping_policy.get()
+        current = await self._anilist_mapping_policy.update(
+            query_budget=parsed["query_budget"],
+            priority_window_days=parsed["priority_window_days"],
+            retry_cooldown_hours=parsed["retry_cooldown_hours"],
+        )
+        await self._audit.append(
+            actor=actor,
+            action="anilist_mapping.policy.update",
+            target_type="anilist_mapping_policy",
+            target_id="default",
+            before_summary=before.__dict__,
+            after_summary=current.__dict__,
+            result="success",
+            error_summary=None,
+            now=datetime.now(UTC),
+        )
+        return {
+            **current.__dict__,
+            "matching_rule": "strict_title_first_air_date_unique",
+        }
 
     async def jobs(self) -> list[dict[str, object]]:
         rows = await self._jobs.list_recent()

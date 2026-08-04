@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from anime_qqbot.catalog.anilist_mapping_policy import AniListMappingPolicyValues
 from anime_qqbot.entrypoints import cli
 from anime_qqbot.persistence.models.catalog import SourceSyncState
 
@@ -82,6 +83,44 @@ async def test_anilist_cycle_discovers_before_small_refresh(monkeypatch) -> None
     assert result.links_confirmed == 2
     assert calls == [
         ("discover", 20),
+        ("refresh", (10, (cli.SOURCE_ANILIST,))),
+    ]
+
+
+async def test_anilist_cycle_uses_persisted_mapping_policy(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Discovery:
+        async def run_once(
+            self, *, limit: int, priority_window_days: int, retry_cooldown_hours: int
+        ):
+            calls.append(("discover", (limit, priority_window_days, retry_cooldown_hours)))
+            return SimpleNamespace(links_confirmed=1)
+
+    async def ingest(
+        _components,
+        *,
+        limit: int,
+        providers: tuple[str, ...],
+    ) -> None:
+        calls.append(("refresh", (limit, providers)))
+
+    monkeypatch.setattr(cli, "_ingest_known_subjects", ingest)
+
+    result = await cli._sync_anilist_catalog(
+        SimpleNamespace(anilist_discovery=Discovery()),
+        discovery_limit=20,
+        refresh_limit=10,
+        mapping_policy=AniListMappingPolicyValues(
+            query_budget=8,
+            priority_window_days=5,
+            retry_cooldown_hours=12,
+        ),
+    )
+
+    assert result.links_confirmed == 1
+    assert calls == [
+        ("discover", (8, 5, 12)),
         ("refresh", (10, (cli.SOURCE_ANILIST,))),
     ]
 

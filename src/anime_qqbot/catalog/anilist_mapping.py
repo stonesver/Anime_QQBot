@@ -41,6 +41,8 @@ class AniListSearch(Protocol):
 class AniListDiscoveryResult:
     rows_processed: int
     links_confirmed: int
+    searches_used: int = 0
+    rows_deferred: int = 0
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,12 @@ class _DiscoveryOutcome:
     status: str
     reason: str
     candidate_count: int
+
+
+@dataclass(frozen=True)
+class _DiscoveryAttempt:
+    outcome: _DiscoveryOutcome | None
+    searches_used: int
 
 
 class AniListLinkDiscoveryService:
@@ -68,10 +76,25 @@ class AniListLinkDiscoveryService:
         self._clock = clock
         self._write_repo = CatalogWriteRepository(sessions)
 
-    async def run_once(self, *, limit: int) -> AniListDiscoveryResult:
+    async def run_once(
+        self,
+        *,
+        limit: int,
+        priority_window_days: int = 7,
+        retry_cooldown_hours: int = 24,
+    ) -> AniListDiscoveryResult:
+        """Discover links using at most ``limit`` AniList search requests.
+
+        One show can require a Japanese-title and a Chinese-title search.  The
+        previous implementation capped candidate shows instead, which could
+        silently double the number of upstream requests and trigger a 429.
+        """
         state = await self._state()
         cursor = _parse_uuid(state.next_cursor if state is not None else None)
-        priority_rows = await self._priority_targets(limit=limit)
+        priority_rows = await self._priority_targets(
+            limit=limit,
+            priority_window_days=priority_window_days,
+        )
         priority_ids = {anime.id for anime, _entry, _snapshot in priority_rows}
         remaining = limit - len(priority_rows)
         rows = list(priority_rows)
@@ -86,19 +109,42 @@ class AniListLinkDiscoveryService:
             return AniListDiscoveryResult(rows_processed=0, links_confirmed=0)
 
         confirmed = 0
+        processed = 0
+        searches_used = 0
+        deferred = 0
         next_cursor = state.next_cursor if state is not None else None
-        for anime, _bangumi_entry, snapshot in rows:
-            outcome = await self._discover(anime.id, snapshot)
-            await self._record_assessment(anime.id, outcome)
+        last_processed_fallback_id: UUID | None = None
+        priority_count = len(priority_rows)
+        for index, (anime, _bangumi_entry, snapshot) in enumerate(rows):
+            attempt = await self._discover(
+                anime.id,
+                snapshot,
+                remaining_searches=limit - searches_used,
+            )
+            searches_used += attempt.searches_used
+            outcome = attempt.outcome
+            if outcome is None:
+                deferred = len(rows) - index
+                break
+            await self._record_assessment(
+                anime.id,
+                outcome,
+                retry_cooldown_hours=retry_cooldown_hours,
+            )
+            processed += 1
             if outcome.confirmed:
                 confirmed += 1
-        if fallback_rows:
-            next_cursor = str(fallback_rows[-1][0].id)
+            if index >= priority_count:
+                last_processed_fallback_id = anime.id
+        if last_processed_fallback_id is not None:
+            next_cursor = str(last_processed_fallback_id)
 
         await self._mark_success(next_cursor=next_cursor)
         return AniListDiscoveryResult(
-            rows_processed=len(rows),
+            rows_processed=processed,
             links_confirmed=confirmed,
+            searches_used=searches_used,
+            rows_deferred=deferred,
         )
 
     async def enrich_anime(self, anime_id: UUID) -> bool:
@@ -112,8 +158,11 @@ class AniListLinkDiscoveryService:
         )
         if not rows:
             return False
-        outcome = await self._discover(anime_id, rows[0][2])
-        await self._record_assessment(anime_id, outcome)
+        attempt = await self._discover(anime_id, rows[0][2], remaining_searches=2)
+        outcome = attempt.outcome
+        if outcome is None:
+            return False
+        await self._record_assessment(anime_id, outcome, retry_cooldown_hours=24)
         state = await self._state()
         await self._mark_success(next_cursor=state.next_cursor if state is not None else None)
         return outcome.confirmed
@@ -122,43 +171,77 @@ class AniListLinkDiscoveryService:
         self,
         anime_id: UUID,
         snapshot: SourceSnapshot,
-    ) -> _DiscoveryOutcome:
+        *,
+        remaining_searches: int,
+    ) -> _DiscoveryAttempt:
         title = snapshot.payload.get("title_jp")
         air_date = _parse_date(snapshot.payload.get("air_date"))
         if not isinstance(title, str) or not title or air_date is None:
-            return _DiscoveryOutcome(
-                confirmed=False,
-                status="missing_source_metadata",
-                reason="missing_bangumi_title_or_air_date",
-                candidate_count=0,
+            return _DiscoveryAttempt(
+                _DiscoveryOutcome(
+                    confirmed=False,
+                    status="missing_source_metadata",
+                    reason="missing_bangumi_title_or_air_date",
+                    candidate_count=0,
+                ),
+                searches_used=0,
             )
         search_titles = _source_titles(
             snapshot.payload.get("title_jp"),
             snapshot.payload.get("title_cn"),
         )
         known_titles = _normalized_titles(*search_titles)
+        searches_used = 0
+        title_matches = 0
+        date_matches = 0
         for search_title in search_titles:
-            candidates = [
-                candidate
-                for candidate in await self._anilist.search(search_title)
-                if not candidate.nsfw
-                and candidate.air_date == air_date
-                and known_titles.intersection(
-                    _normalized_titles(candidate.title_cn, candidate.title_jp)
+            if searches_used >= remaining_searches:
+                return _DiscoveryAttempt(None, searches_used=searches_used)
+            search_results = await self._anilist.search(search_title)
+            searches_used += 1
+            non_adult = [candidate for candidate in search_results if not candidate.nsfw]
+            candidates = []
+            for candidate in non_adult:
+                titles_match = bool(
+                    known_titles.intersection(
+                        _normalized_titles(candidate.title_cn, candidate.title_jp)
+                    )
                 )
-            ]
+                if titles_match:
+                    title_matches += 1
+                if candidate.air_date == air_date:
+                    date_matches += 1
+                if titles_match and candidate.air_date == air_date:
+                    candidates.append(candidate)
             if len(candidates) == 1:
                 if await self._confirm(anime_id, candidates[0].subject_id):
-                    return _DiscoveryOutcome(True, "confirmed", "unique_exact_match", 1)
-                return _DiscoveryOutcome(False, "sync_failed", "candidate_sync_failed", 1)
-            if len(candidates) > 1:
-                return _DiscoveryOutcome(
-                    False,
-                    "ambiguous",
-                    "multiple_exact_candidates",
-                    len(candidates),
+                    return _DiscoveryAttempt(
+                        _DiscoveryOutcome(True, "confirmed", "unique_exact_match", 1),
+                        searches_used=searches_used,
+                    )
+                return _DiscoveryAttempt(
+                    _DiscoveryOutcome(False, "sync_failed", "candidate_sync_failed", 1),
+                    searches_used=searches_used,
                 )
-        return _DiscoveryOutcome(False, "no_candidate", "no_exact_candidate", 0)
+            if len(candidates) > 1:
+                return _DiscoveryAttempt(
+                    _DiscoveryOutcome(
+                        False,
+                        "ambiguous",
+                        "multiple_exact_candidates",
+                        len(candidates),
+                    ),
+                    searches_used=searches_used,
+                )
+        if title_matches:
+            outcome = _DiscoveryOutcome(
+                False, "no_candidate", "first_air_date_mismatch", title_matches
+            )
+        elif date_matches:
+            outcome = _DiscoveryOutcome(False, "no_candidate", "title_not_matched", date_matches)
+        else:
+            outcome = _DiscoveryOutcome(False, "no_candidate", "no_search_candidate", 0)
+        return _DiscoveryAttempt(outcome, searches_used=searches_used)
 
     async def _confirm(self, anime_id: UUID, anilist_id: int) -> bool:
         delta = await self._sync.sync_subject(anilist_id)
@@ -254,13 +337,14 @@ class AniListLinkDiscoveryService:
         self,
         *,
         limit: int,
+        priority_window_days: int = 7,
     ) -> list[tuple[Anime, ExternalEntry, SourceSnapshot]]:
         """Return currently relevant unmapped shows before the background scan."""
         if limit <= 0:
             return []
         now = self._clock.now()
         today = now.astimezone(ZoneInfo("Asia/Shanghai")).date()
-        end_date = today + timedelta(days=7)
+        end_date = today + timedelta(days=priority_window_days)
         next_air_date = (
             select(func.min(AiringOccurrenceRow.air_date))
             .where(AiringOccurrenceRow.anime_id == Anime.id)
@@ -325,6 +409,8 @@ class AniListLinkDiscoveryService:
         self,
         anime_id: UUID,
         outcome: _DiscoveryOutcome,
+        *,
+        retry_cooldown_hours: int,
     ) -> None:
         async with self._sessions() as session, session.begin():
             if outcome.confirmed:
@@ -344,7 +430,7 @@ class AniListLinkDiscoveryService:
                         reason=outcome.reason,
                         candidate_count=outcome.candidate_count,
                         attempted_at=now,
-                        retry_after=now + timedelta(days=1),
+                        retry_after=now + timedelta(hours=retry_cooldown_hours),
                     )
                 )
                 return
@@ -352,7 +438,7 @@ class AniListLinkDiscoveryService:
             row.reason = outcome.reason
             row.candidate_count = outcome.candidate_count
             row.attempted_at = now
-            row.retry_after = now + timedelta(days=1)
+            row.retry_after = now + timedelta(hours=retry_cooldown_hours)
 
     async def _confirmed_anime_ids(self) -> set[UUID]:
         async with self._sessions() as session:

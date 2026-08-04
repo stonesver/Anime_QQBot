@@ -50,11 +50,13 @@ class AdminWebAPI:
             ("mappings", self.mappings, ["GET"]),
             ("notifications", self.notifications, ["GET"]),
             ("sources", self.sources, ["GET"]),
+            ("mapping-policy", self.mapping_policy, ["GET"]),
             ("jobs", self.jobs, ["GET"]),
             ("controls", self.controls, ["GET"]),
             ("groups/<group_id>/update", self.update_group, ["POST"]),
             ("delivery/global", self.global_delivery, ["POST"]),
             ("jobs/enqueue", self.enqueue_job, ["POST"]),
+            ("mapping-policy", self.update_mapping_policy, ["POST"]),
             (
                 "subscriptions/<subscription_id>/cancel",
                 self.cancel_subscription,
@@ -119,6 +121,18 @@ class AdminWebAPI:
 
     async def sources(self) -> object:
         return await self._read("sources")
+
+    async def mapping_policy(self) -> object:
+        return await self._read("mapping_policy")
+
+    async def update_mapping_policy(self) -> object:
+        payload = await self._json()
+        return await self._write(
+            "update_mapping_policy",
+            query_budget=payload.get("query_budget"),
+            priority_window_days=payload.get("priority_window_days"),
+            retry_cooldown_hours=payload.get("retry_cooldown_hours"),
+        )
 
     async def jobs(self) -> object:
         return await self._read("jobs")

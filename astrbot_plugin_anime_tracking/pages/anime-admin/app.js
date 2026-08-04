@@ -177,7 +177,7 @@ function mappingOutcome(statusName, candidateCount) {
 
 function mappingEvidence(item) {
   if (item.kind !== "assessment") return `${item.evidence_type} / ${item.method}`;
-  const labels = { no_exact_candidate: "无标题与首播日均精确匹配的候选", multiple_exact_candidates: "多个候选同时满足严格条件", missing_bangumi_title_or_air_date: "Bangumi 缺少日文标题或首播日", candidate_sync_failed: "AniList 候选详情未能同步" };
+  const labels = { no_search_candidate: "AniList 搜索未返回可用候选", first_air_date_mismatch: "标题能对应，但首播日不一致", title_not_matched: "首播日可对应，但标题未精确匹配", multiple_exact_candidates: "多个候选同时满足严格条件", missing_bangumi_title_or_air_date: "Bangumi 缺少日文标题或首播日", candidate_sync_failed: "AniList 候选详情未能同步" };
   return `${labels[item.evidence_type] || item.evidence_type}；最近尝试 ${formatTime(item.attempted_at)}`;
 }
 
@@ -197,9 +197,9 @@ async function loadNotifications() {
 }
 
 async function loadSources() {
-  loading("#sources-content"); loading("#jobs-content");
+  loading("#sources-content"); loading("#mapping-policy-content"); loading("#jobs-content");
   try {
-    const [sources, jobs] = await Promise.all([bridge.apiGet("sources"), bridge.apiGet("jobs")]);
+    const [sources, policy, jobs] = await Promise.all([bridge.apiGet("sources"), bridge.apiGet("mapping-policy"), bridge.apiGet("jobs")]);
     $("#sources-content").innerHTML = sources.length ? sources.map((item) => `<article class="source-card">
       <p class="section-kicker">${escapeHtml(item.provider)}</p><h3>${item.last_error ? "需要关注" : "运行正常"}</h3>
       <dl><dt>最近成功</dt><dd>${formatTime(item.last_success_at)}</dd><dt>最近失败</dt><dd>${formatTime(item.last_failure_at)}</dd>
@@ -207,7 +207,26 @@ async function loadSources() {
     $("#jobs-content").innerHTML = jobs.length ? `<table><thead><tr><th>任务</th><th>状态</th><th>创建</th><th>错误</th></tr></thead><tbody>${
       jobs.map((item) => `<tr><td>${escapeHtml(item.job_type)}</td><td>${status(item.status)}</td><td>${formatTime(item.created_at)}</td><td>${escapeHtml(item.error_summary || "—")}</td></tr>`).join("")
     }</tbody></table>` : empty("还没有管理任务。");
-  } catch (reason) { error("#sources-content", reason); error("#jobs-content", reason); }
+    renderMappingPolicy(policy);
+  } catch (reason) { error("#sources-content", reason); error("#mapping-policy-content", reason); error("#jobs-content", reason); }
+}
+
+function renderMappingPolicy(policy) {
+  const outcomes = Object.entries(policy.assessment_counts || {}).map(([reason, count]) =>
+    `${escapeHtml(mappingReason(reason))} ${escapeHtml(count)}`).join(" · ") || "尚无严格映射失败记录";
+  $("#mapping-policy-content").innerHTML = `<div class="policy-fields">
+    <label>单轮搜索预算<input id="mapping-query-budget" type="number" min="1" max="30" value="${escapeHtml(policy.query_budget)}" /><small>实际 AniList 搜索请求数，上限 30。</small></label>
+    <label>近期优先窗口<input id="mapping-priority-window" type="number" min="1" max="14" value="${escapeHtml(policy.priority_window_days)}" /><small>未来 1–14 天内的番剧优先尝试。</small></label>
+    <label>失败重试冷却<input id="mapping-retry-cooldown" type="number" min="1" max="168" value="${escapeHtml(policy.retry_cooldown_hours)}" /><small>严格不匹配后等待的小时数。</small></label>
+  </div>
+  <p class="policy-note">严格规则：标题 + 首播日 + 唯一候选。最近一次 AniList 成功：${formatTime(policy.last_success_at)}；${policy.last_error ? `错误：${escapeHtml(policy.last_error)}` : "当前无错误摘要"}。</p>
+  <p class="policy-note">失败归因：${outcomes}</p>
+  <div class="action-row"><button class="button small ghost" data-action="save-mapping-policy">保存</button><button class="button small" data-action="save-and-sync-mapping-policy">保存并立即同步</button></div>`;
+}
+
+function mappingReason(reason) {
+  const labels = { no_search_candidate: "无搜索候选", first_air_date_mismatch: "首播日不一致", title_not_matched: "标题未精确匹配", multiple_exact_candidates: "候选不唯一", missing_bangumi_title_or_air_date: "Bangumi 数据不完整", candidate_sync_failed: "候选同步失败" };
+  return labels[reason] || reason;
 }
 
 const loaders = { overview: loadOverview, catalog: loadCatalog, groups: loadGroups, subscriptions: loadSubscriptions, mappings: loadMappings, notifications: loadNotifications, sources: loadSources };
@@ -256,6 +275,21 @@ document.addEventListener("click", async (event) => {
       const key = `catalog-${Date.now()}`;
       await bridge.apiPost("jobs/enqueue", { job_type: "sync_catalog", idempotency_key: key, parameters: { provider: "bangumi" } });
       toast("目录同步任务已创建"); return loadSources();
+    }
+    if (target.dataset.action === "save-mapping-policy" || target.dataset.action === "save-and-sync-mapping-policy") {
+      const payload = {
+        query_budget: Number($("#mapping-query-budget").value),
+        priority_window_days: Number($("#mapping-priority-window").value),
+        retry_cooldown_hours: Number($("#mapping-retry-cooldown").value),
+      };
+      await bridge.apiPost("mapping-policy", payload);
+      if (target.dataset.action === "save-and-sync-mapping-policy") {
+        await bridge.apiPost("jobs/enqueue", { job_type: "sync_anilist_mapping", idempotency_key: `anilist-mapping-${Date.now()}`, parameters: {} });
+        toast("策略已保存，AniList 映射同步已创建");
+      } else {
+        toast("映射策略已保存，将在下一轮同步生效");
+      }
+      return loadSources();
     }
   } catch (reason) { toast(reason.message || "操作失败"); }
 });

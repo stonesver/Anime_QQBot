@@ -33,6 +33,7 @@ def redact_sensitive(value: object) -> object:
 class OperatorJobRepository:
     ALLOWED_TYPES: ClassVar[set[str]] = {
         "sync_catalog",
+        "sync_anilist_mapping",
         "poll_mikan",
         "rebuild_projection",
         "retry_delivery",

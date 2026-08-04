@@ -515,5 +515,74 @@ async def test_discovery_records_no_candidate_and_respects_retry_cooldown(sessio
         assessment = await session.get(AniListMappingAssessment, anime_id)
     assert assessment is not None
     assert assessment.status == "no_candidate"
-    assert assessment.reason == "no_exact_candidate"
+    assert assessment.reason == "no_search_candidate"
     assert assessment.retry_after == now + timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_discovery_caps_actual_search_requests_without_cooling_partial_row(
+    session_factory,
+) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    anime_id = uuid4()
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=anime_id,
+        entry_id=uuid4(),
+        title="日文标题",
+        air_date=date(2026, 7, 1),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    async with session_factory() as session, session.begin():
+        snapshot = (
+            await session.execute(
+                select(SourceSnapshot).where(SourceSnapshot.external_entry_id.is_not(None))
+            )
+        ).scalar_one()
+        snapshot.payload = {**snapshot.payload, "title_cn": "中文标题"}
+    stub = _StubAniList({}, searches={"日文标题": [], "中文标题": []})
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    result = await discovery.run_once(limit=1)
+
+    assert result.rows_processed == 0
+    assert result.searches_used == 1
+    assert result.rows_deferred == 1
+    assert stub.search_calls == ["日文标题"]
+    async with session_factory() as session:
+        assert await session.get(AniListMappingAssessment, anime_id) is None
+
+
+@pytest.mark.asyncio
+async def test_discovery_uses_configured_retry_cooldown(session_factory) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    anime_id = uuid4()
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=anime_id,
+        entry_id=uuid4(),
+        title="可调冷却",
+        air_date=date(2026, 7, 1),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    stub = _StubAniList({})
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    await discovery.run_once(limit=1, retry_cooldown_hours=2)
+
+    async with session_factory() as session:
+        assessment = await session.get(AniListMappingAssessment, anime_id)
+    assert assessment is not None
+    assert assessment.retry_after == now + timedelta(hours=2)

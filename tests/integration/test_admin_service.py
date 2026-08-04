@@ -37,7 +37,7 @@ async def session_factory():
             "notification_jobs, subscription_resource_filters, follow_subscriptions, "
             "source_snapshots, anime_source_links, anime_titles, airing_occurrences, "
             "external_entries, animes, source_sync_states, group_memberships, "
-            "chat_groups RESTART IDENTITY CASCADE"
+            "chat_groups, anilist_mapping_policies RESTART IDENTITY CASCADE"
         )
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     try:
@@ -294,6 +294,29 @@ async def test_admin_mapping_status_exposes_strict_auto_match_failure(session_fa
             "attempted_at": "2026-08-04T00:00:00+00:00",
         }
     ]
+
+
+async def test_admin_mapping_policy_is_persisted_and_audited(session_factory) -> None:
+    service = AdminService(session_factory)
+
+    assert (await service.mapping_policy())["query_budget"] == 12
+    updated = await service.update_mapping_policy(
+        actor="owner-hash",
+        query_budget=8,
+        priority_window_days=5,
+        retry_cooldown_hours=12,
+    )
+
+    assert updated == {
+        "query_budget": 8,
+        "priority_window_days": 5,
+        "retry_cooldown_hours": 12,
+        "matching_rule": "strict_title_first_air_date_unique",
+    }
+    assert (await service.mapping_policy())["query_budget"] == 8
+    async with session_factory() as session:
+        actions = (await session.execute(select(AdminAuditEvent.action))).scalars().all()
+    assert actions == ["anilist_mapping.policy.update"]
 
 
 async def test_admin_group_update_and_delivery_control_are_audited(

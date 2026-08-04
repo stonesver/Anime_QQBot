@@ -41,6 +41,10 @@ from anime_qqbot.catalog.anilist_mapping import (
     AniListDiscoveryResult,
     AniListLinkDiscoveryService,
 )
+from anime_qqbot.catalog.anilist_mapping_policy import (
+    AniListMappingPolicyRepository,
+    AniListMappingPolicyValues,
+)
 from anime_qqbot.catalog.bangumi_sync import BangumiCatalogSync
 from anime_qqbot.catalog.enrichment import CatalogEnrichmentRunner
 from anime_qqbot.catalog.models import LinkEvidenceType, LinkStatus
@@ -530,8 +534,16 @@ async def _sync_anilist_catalog(
     *,
     discovery_limit: int,
     refresh_limit: int,
+    mapping_policy: AniListMappingPolicyValues | None = None,
 ) -> AniListDiscoveryResult:
-    result = await components.anilist_discovery.run_once(limit=discovery_limit)
+    if mapping_policy is None:
+        result = await components.anilist_discovery.run_once(limit=discovery_limit)
+    else:
+        result = await components.anilist_discovery.run_once(
+            limit=mapping_policy.query_budget,
+            priority_window_days=mapping_policy.priority_window_days,
+            retry_cooldown_hours=mapping_policy.retry_cooldown_hours,
+        )
     await _ingest_known_subjects(
         components,
         limit=refresh_limit,
@@ -803,10 +815,12 @@ async def run_worker() -> None:
             now=components.clock.now(),
             limit=100,
         )
+        mapping_policy = await AniListMappingPolicyRepository(components.sessions).get()
         anilist = await _sync_anilist_catalog(
             components,
             discovery_limit=20,
             refresh_limit=10,
+            mapping_policy=mapping_policy,
         )
         mikan = await _discover_mikan_links(
             components.sessions,
@@ -831,6 +845,21 @@ async def run_worker() -> None:
             "created_releases": summary.releases_created,
         }
 
+    async def operator_sync_anilist_mapping(_parameters: dict[str, object]) -> dict[str, object]:
+        policy = await AniListMappingPolicyRepository(components.sessions).get()
+        result = await _sync_anilist_catalog(
+            components,
+            discovery_limit=20,
+            refresh_limit=10,
+            mapping_policy=policy,
+        )
+        return {
+            "rows_processed": result.rows_processed,
+            "links_confirmed": result.links_confirmed,
+            "searches_used": result.searches_used,
+            "rows_deferred": result.rows_deferred,
+        }
+
     async def operator_projection(_parameters: dict[str, object]) -> dict[str, object]:
         return {"updated": await _project_fresh_snapshots(components)}
 
@@ -847,6 +876,7 @@ async def run_worker() -> None:
         OperatorJobRepository(components.sessions),
         {
             "sync_catalog": operator_sync_catalog,
+            "sync_anilist_mapping": operator_sync_anilist_mapping,
             "poll_mikan": operator_poll_mikan,
             "rebuild_projection": operator_projection,
             "cleanup_sessions": operator_cleanup,
@@ -867,10 +897,12 @@ async def run_worker() -> None:
                 except Exception as exc:
                     logger.exception("worker.bangumi.sync", extra={"error": str(exc)})
                 try:
+                    mapping_policy = await AniListMappingPolicyRepository(components.sessions).get()
                     await _sync_anilist_catalog(
                         components,
                         discovery_limit=20,
                         refresh_limit=10,
+                        mapping_policy=mapping_policy,
                     )
                 except Exception as exc:
                     await _record_source_failure(
