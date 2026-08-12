@@ -65,6 +65,9 @@ class GroupRuntimeSetting(Base):
         ForeignKey("chat_groups.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    general_chat_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     mention_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     direct_shortcuts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active_notifications_enabled: Mapped[bool] = mapped_column(

@@ -47,3 +47,10 @@ def test_page_covers_all_operations_sections_and_mobile() -> None:
     assert "future_exact_animes" in script
     assert "future_unmapped_anilist_animes" in script
     assert "future_mapped_without_exact_animes" in script
+
+
+def test_group_page_exposes_per_group_general_chat_toggle() -> None:
+    script = (PAGE / "app.js").read_text()
+
+    assert "通用聊天" in script
+    assert 'data-toggle="general_chat_enabled"' in script

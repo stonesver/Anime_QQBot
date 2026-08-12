@@ -119,13 +119,23 @@ ssh -p 2222 \
 4. 查看 `docker compose logs -f napcat astrbot`，确认反向 WebSocket 已连接。
 5. 把小号加入测试群，发送 `/番剧 帮助`。
 
-### v0.3 分阶段开关
+### 群入口与 LLM 分阶段开关
 
-进入 AstrBot 的 `anime_tracking` 插件配置，先在测试群按以下顺序开启：
+进入 AstrBot 的 `anime_tracking` 插件配置，先在测试群按以下顺序设置：
 
-1. `interaction_gateway_enabled=true`：启用 @机器人入口；新群短命令仍默认关闭。
+1. 使用 AstrBot 原生 LLM 对话时保持 `interaction_gateway_enabled=false`，避免旧的有限
+   `@机器人` 命令解析器提前拦截自然语言；`/番剧` 固定命令不受影响。
 2. `send_governor_enabled=true`：启用查询和主动提醒的统一限频。
 3. `admin_page_writes_enabled=true`：确认管理页只经 SSH 隧道访问后，允许写操作。
+
+在 AstrBot 配置支持 Function Calling 的聊天模型并启用工具 `anime_readonly_query`。
+MiniMax Token Plan 应使用对应 Coding Plan/API Key；出现 HTTP 402
+`insufficient_balance_error (1008)` 时应在 MiniMax 侧检查 Key 所属套餐与余额，不能靠
+插件重试解决。
+
+控制台“群设置”中的“通用聊天”按群独立保存，所有已有和新群默认关闭。关闭时只有
+明确 `@机器人` 的番剧问题会通过 LLM 只读工具查询；非番剧问题返回简短帮助。打开后
+保留通用聊天。订阅、退订和设置修改不会由 LLM 工具执行，仍使用 `/番剧` 固定命令。
 
 内容运营开关不在 QQ 群内暴露。进入控制台“内容运营”页后，只对测试群逐项开启每日
 汇总、`@全体` 或周报；所有新开关默认关闭。每日 `@全体` 依赖
@@ -154,14 +164,14 @@ Mikan 通知不使用该动作位。
 ```text
 @机器人 今天有什么番
 @机器人 搜番 芙莉莲
-@机器人 开启短命令
+@机器人 我的订阅
 今日番剧
 搜番 芙莉莲
 追番 1
 我的追番
 ```
 
-未明确开启短命令的群，只响应 `/番剧 ...` 与 @机器人，不扫描普通聊天正文。
+未明确开启短命令的群不扫描普通聊天正文；LLM 自然语言也只由明确 `@机器人` 触发。
 
 6185、6099 不应加入 Nginx，也不应在云安全组开放。AstrBot 不同补丁版本的 WebUI
 字段名称可能略有差别，以 `aiocqhttp`、反向 WebSocket 监听端口和 Access Token
@@ -210,3 +220,7 @@ vendor 刷新、NapCat 是否原本停止或容器是否发生异常重启，再
 发布镜像前确认服务器 `.env` 已包含 `ANIMESCHEDULE_TOKEN`，且该文件不进入镜像和版本库。`ANIMESCHEDULE_ENABLED` 默认是 `false`；升级完成、后台确认 Token 为“已配置”后，再由 Bot 持有者启用并手动触发一次同步。
 
 数据库迁移 `0017_animeschedule_integration` 为已有映射策略增加 AnimeSchedule 控制字段，并允许 `sync_animeschedule` 管理任务。回滚应用版本前应先在后台关闭 AnimeSchedule；旧的 Bangumi、AniList、Mikan 数据和个人资源通知不依赖新来源。
+
+数据库迁移 `0018_minimax_readonly_tools` 为每群增加默认关闭的
+`general_chat_enabled`。应用回滚到不认识该字段的旧版本前可保留该列；如果必须回退
+迁移，先确认所有群都不再依赖通用聊天开关，再执行 Alembic downgrade。

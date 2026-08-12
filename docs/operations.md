@@ -80,10 +80,18 @@ docker compose exec astrbot python -m anime_qqbot.entrypoints.healthcheck astrbo
 4. 两端 Access Token 与 `.env` 的 `ONEBOT_TOKEN` 完全相同；
 5. `astrbot-plugin-anime-tracking` 已加载且消费者心跳正常。
 
-如果 `/番剧` 有回复但 `@机器人` 或短命令没有回复，再检查插件发布开关和本群策略。
-`interaction_gateway_enabled` 默认关闭；本群 `direct_shortcuts_enabled` 也默认关闭。
+如果 `/番剧` 有回复但 LLM `@机器人` 没有回复，先检查 AstrBot 当前聊天模型、
+Function Calling 和 `anime_readonly_query` 工具是否启用。使用原生 LLM 入口时
+`interaction_gateway_enabled` 必须保持关闭；开启它会让旧的有限命令解析器先回复
+“not a supported mention command”。本群 `direct_shortcuts_enabled` 默认关闭。
 短命令只接受完整结构：`今日番剧`、`本周番剧`、`搜番 ...`、`追番 ...`、
 `退订 ...`、`我的追番`，普通聊天包含这些词不会触发。
+
+群设置中的“通用聊天”默认关闭。关闭时，未成功调用只读番剧工具的模型输出会被固定
+帮助替换；工具异常也不会回退到模型猜测。若 MiniMax 返回 HTTP 402
+`insufficient_balance_error (1008)`，检查所用 Key 是否属于已购买的 Token/Coding
+Plan 以及套餐余额。固定 `/番剧` 命令不经过 MiniMax，可用于区分模型故障与 Anime
+Core/数据库故障。
 
 修改 Token 后要同时更新 `.env` 和 AstrBot WebUI 中的适配器 Token，再重建两个容器：
 
@@ -110,6 +118,8 @@ Mikan 更新不会再投递，以免服务恢复后刷屏。
 使用 SSH 隧道访问 `http://127.0.0.1:6185`，在插件详情打开“番剧放送控制台”。
 不要把 6185 加入 Nginx 或云安全组。页面可查看已同步番剧目录、群策略、订阅、映射、
 通知、来源和管理任务；写入只有在 `admin_page_writes_enabled=true` 时可用。
+“群设置”页的“通用聊天”只能由 AstrBot Dashboard 管理者修改，QQ 群主、群管理员和
+群成员无权打开。修改后在目标测试群分别验证一个番剧问题和一个非番剧问题。
 
 “内容运营”页只允许 Bot 持有者通过 AstrBot Dashboard 配置，QQ 群主、群管理员和
 群成员不能修改。每日资源汇总、每日 `@全体` 和每周周报均按群默认关闭：

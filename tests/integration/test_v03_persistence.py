@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from anime_tracking_plugin.astrbot_tool import AnimeReadonlyTool
+from anime_tracking_plugin.lifecycle import PluginLifecycle
+from anime_tracking_plugin.llm_policy import LLMPolicyGuard
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from anime_qqbot.groups.repository_v2 import ChatGroupRepository, GroupEvent
@@ -53,6 +58,7 @@ async def test_group_policy_defaults_and_optimistic_update(session_factory) -> N
     now = datetime(2026, 7, 29, 9, tzinfo=UTC)
 
     initial = await repo.get_policy(group.id)
+    assert initial.general_chat_enabled is False
     assert initial.mention_enabled is True
     assert initial.direct_shortcuts_enabled is False
     assert initial.active_notifications_enabled is True
@@ -64,6 +70,7 @@ async def test_group_policy_defaults_and_optimistic_update(session_factory) -> N
         group.id,
         expected_version=initial.version,
         now=now,
+        general_chat_enabled=True,
         direct_shortcuts_enabled=True,
         weekly_report_enabled=True,
         weekly_report_weekday=0,
@@ -73,6 +80,7 @@ async def test_group_policy_defaults_and_optimistic_update(session_factory) -> N
         quiet_start_minute=23 * 60,
         quiet_end_minute=7 * 60,
     )
+    assert changed.general_chat_enabled is True
     assert changed.direct_shortcuts_enabled is True
     assert changed.weekly_report_enabled is True
     assert changed.weekly_report_weekday == 0
@@ -88,6 +96,50 @@ async def test_group_policy_defaults_and_optimistic_update(session_factory) -> N
             now=now,
             mention_enabled=False,
         )
+
+
+async def test_readonly_tool_uses_current_event_identity(session_factory) -> None:
+    lifecycle = PluginLifecycle(start_dispatcher=False)
+    lifecycle.sessions = session_factory
+    guard = LLMPolicyGuard()
+    event = SimpleNamespace(
+        group_id="tool-group",
+        message_id="tool-message",
+        message_str="我的订阅",
+        unified_msg_origin="umo:tool-group",
+        role="member",
+        message_obj=SimpleNamespace(
+            self_id="bot1",
+            group_id="tool-group",
+            message_id="tool-message",
+            sender={"user_id": "tool-user", "nickname": "alice"},
+            message=[
+                {"type": "At", "data": {"qq": "bot1"}},
+                {"type": "Plain", "text": "我的订阅"},
+            ],
+        ),
+    )
+    guard.begin(event, general_chat_enabled=False)
+
+    async def lifecycle_provider() -> PluginLifecycle:
+        return lifecycle
+
+    tool = AnimeReadonlyTool(
+        lifecycle_provider=lifecycle_provider,
+        policy_guard=guard,
+    )
+    raw_result = await tool.call(
+        SimpleNamespace(context=SimpleNamespace(event=event)),
+        action="my_subscriptions",
+    )
+    result = json.loads(raw_result)
+
+    assert result["status"] == "not_found"
+    assert result["content"] == "你当前没有订阅"
+    stored = await ChatGroupRepository(session_factory).find_by_external(
+        "qq", "tool-group"
+    )
+    assert stored is not None
 
 
 async def test_interaction_session_isolated_and_reply_bound(session_factory) -> None:

@@ -96,6 +96,7 @@ async def test_admin_read_models_are_safe_and_aggregated(session_factory) -> Non
 
     assert overview["groups"] == 1
     assert overview["subscriptions"] == 1
+    assert groups["items"][0]["general_chat_enabled"] is False
     assert groups["items"][0]["direct_shortcuts_enabled"] is False
     assert "unified_msg_origin" not in groups["items"][0]
     assert subscriptions["items"][0]["user_id"] == "123…789"
@@ -366,6 +367,7 @@ async def test_admin_group_update_and_delivery_control_are_audited(
         actor="owner-hash",
         expected_version=1,
         changes={
+            "general_chat_enabled": True,
             "direct_shortcuts_enabled": True,
             "daily_digest_enabled": True,
             "daily_digest_at_all_enabled": True,
@@ -374,6 +376,7 @@ async def test_admin_group_update_and_delivery_control_are_audited(
     )
     paused = await service.set_global_delivery(paused=True, actor="owner-hash", reason="canary")
 
+    assert updated["general_chat_enabled"] is True
     assert updated["direct_shortcuts_enabled"] is True
     assert updated["daily_digest_enabled"] is True
     assert updated["daily_digest_at_all_enabled"] is True

@@ -126,14 +126,16 @@ async function loadGroups() {
     const data = await bridge.apiGet("groups", { query: $("#group-query").value, page: 1, page_size: 50 });
     state.groups = data.items;
     if (!data.items.length) return $("#groups-content").innerHTML = empty("没有匹配的群。");
-    $("#groups-content").innerHTML = `<table><thead><tr><th>群</th><th>@入口</th><th>短命令</th><th>主动提醒</th><th>状态</th><th>操作</th></tr></thead><tbody>${
+    $("#groups-content").innerHTML = `<table><thead><tr><th>群</th><th>通用聊天</th><th>@入口</th><th>短命令</th><th>主动提醒</th><th>状态</th><th>操作</th></tr></thead><tbody>${
       data.items.map((item) => `<tr>
         <td>${escapeHtml(item.group_id)}</td>
+        <td>${item.general_chat_enabled ? "开" : "关"}</td>
         <td>${item.mention_enabled ? "开" : "关"}</td>
         <td>${item.direct_shortcuts_enabled ? "开" : "关"}</td>
         <td>${item.active_notifications_enabled ? "开" : "关"}</td>
         <td>${item.paused ? status("paused") : status("active")}</td>
         <td><div class="action-row">
+          <button class="button small ghost" data-group="${escapeHtml(item.group_id)}" data-toggle="general_chat_enabled">切换通用聊天</button>
           <button class="button small ghost" data-group="${escapeHtml(item.group_id)}" data-toggle="direct_shortcuts_enabled">切换短命令</button>
           <button class="button small ghost" data-group="${escapeHtml(item.group_id)}" data-toggle="active_notifications_enabled">切换提醒</button>
         </div></td>

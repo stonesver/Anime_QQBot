@@ -29,12 +29,30 @@ try:
         MessageEventResult,
         filter,  # noqa: A004
     )
+    from astrbot.api.provider import LLMResponse, ProviderRequest  # type: ignore[import-not-found]
     from astrbot.api.star import Context, Star  # type: ignore[import-not-found]
+    from astrbot.core.agent.message import TextPart  # type: ignore[import-not-found]
+    from astrbot.core.agent.run_context import ContextWrapper  # type: ignore[import-not-found]
+    from astrbot.core.astr_agent_context import AstrAgentContext  # type: ignore[import-not-found]
 except ModuleNotFoundError:
-    Star = object  # type: ignore[misc]
     Context = Any  # type: ignore[misc]
     AstrMessageEvent = Any  # type: ignore[misc]
     MessageEventResult = Any  # type: ignore[misc]
+    ProviderRequest = Any  # type: ignore[misc]
+    LLMResponse = Any  # type: ignore[misc]
+    ContextWrapper = Any  # type: ignore[misc]
+    AstrAgentContext = Any  # type: ignore[misc]
+
+    class Star:  # type: ignore[no-redef]
+        def __init__(self, context: Any) -> None:
+            self.context = context
+
+    class TextPart:  # type: ignore[no-redef]
+        def __init__(self, *, text: str) -> None:
+            self.text = text
+
+        def mark_as_temp(self) -> TextPart:
+            return self
 
     class _FakeFilter:
         class EventMessageType:
@@ -56,6 +74,14 @@ except ModuleNotFoundError:
         def event_message_type(_kind: Any) -> Any:
             return lambda fn: fn
 
+        @staticmethod
+        def on_llm_request() -> Any:
+            return lambda fn: fn
+
+        @staticmethod
+        def on_agent_done() -> Any:
+            return lambda fn: fn
+
     class _FakeGroup:
         def __call__(self, fn: Any) -> Any:
             return self
@@ -67,16 +93,20 @@ except ModuleNotFoundError:
 
 
 from anime_qqbot.content_operations.polls import PollService, format_poll
+from anime_qqbot.groups.repository_v2 import ChatGroupRepository, GroupEvent
+from anime_qqbot.groups.settings import GroupRuntimeSettingsRepository
 from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
 
 from .anime_tracking_plugin.adapter import EventAdapter, Reply
 from .anime_tracking_plugin.admin_api import AdminWebAPI
+from .anime_tracking_plugin.astrbot_tool import AnimeReadonlyTool
 from .anime_tracking_plugin.event_envelope import (
     from_astrbot_event,
     group_id_from_astrbot_event,
 )
 from .anime_tracking_plugin.interaction_gateway import InteractionGateway
 from .anime_tracking_plugin.lifecycle import PluginLifecycle
+from .anime_tracking_plugin.llm_policy import LLMPolicyGuard, runtime_hint
 from .anime_tracking_plugin.rendering import reply_to_event_result
 
 
@@ -85,6 +115,12 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
         super().__init__(context)
         self._config = config or {}
         self._lifecycle: PluginLifecycle | None = None
+        self._llm_policy_guard = LLMPolicyGuard()
+        self._readonly_tool = AnimeReadonlyTool(
+            lifecycle_provider=self._ensure_lifecycle,
+            policy_guard=self._llm_policy_guard,
+        )
+        self.context.add_llm_tools(self._readonly_tool)
         self._admin_api = AdminWebAPI(context, self._ensure_lifecycle)
 
     async def _ensure_lifecycle(self) -> PluginLifecycle:
@@ -97,6 +133,42 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
     async def _on_astrbot_loaded(self) -> None:
         """Start the durable notification consumer when AstrBot is ready."""
         await self._ensure_lifecycle()
+
+    @filter.on_llm_request()  # type: ignore[misc]
+    async def _on_llm_request(
+        self,
+        event: AstrMessageEvent,
+        req: ProviderRequest,
+    ) -> None:
+        """Inject one-turn policy only for explicit QQ group mentions."""
+        envelope = from_astrbot_event(event)
+        if not envelope.group_id or not envelope.user_id or not envelope.mentions_bot:
+            return
+        try:
+            general_chat_enabled = await self._general_chat_enabled(event)
+        except Exception:
+            general_chat_enabled = False
+        self._llm_policy_guard.begin(
+            event,
+            general_chat_enabled=general_chat_enabled,
+        )
+        req.extra_user_content_parts.append(
+            TextPart(text=runtime_hint(general_chat_enabled=general_chat_enabled)).mark_as_temp()
+        )
+
+    @filter.on_agent_done()  # type: ignore[misc]
+    async def _on_agent_done(
+        self,
+        event: AstrMessageEvent,
+        run_context: ContextWrapper[AstrAgentContext],
+        resp: LLMResponse,
+    ) -> None:
+        """Replace ungrounded or failed completions before AstrBot sends them."""
+        _ = run_context
+        resp.completion_text = self._llm_policy_guard.finish(
+            event,
+            str(getattr(resp, "completion_text", "")),
+        )
 
     # ------------------------------------------------------------------
     # Fixed commands — 12 spec commands plus help
@@ -280,6 +352,24 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
             card_reply_builder=lifecycle.card_reply_factory,
             schedule_reply_builder=lifecycle.schedule_reply_factory,
         )
+
+    async def _general_chat_enabled(self, event: AstrMessageEvent) -> bool:
+        lifecycle = await self._ensure_lifecycle()
+        if lifecycle.sessions is None:
+            return False
+        envelope = from_astrbot_event(event)
+        group = await ChatGroupRepository(lifecycle.sessions).upsert_group_event(
+            GroupEvent(
+                platform=envelope.platform,
+                external_group_id=envelope.group_id,
+                external_user_id=envelope.user_id,
+                display_name=envelope.display_name,
+                unified_msg_origin=envelope.unified_msg_origin,
+                timestamp=datetime.now(UTC),
+            )
+        )
+        policy = await GroupRuntimeSettingsRepository(lifecycle.sessions).get_policy(group.id)
+        return policy.general_chat_enabled
 
     def _interactive_cooldown(
         self, event: AstrMessageEvent, lifecycle: PluginLifecycle

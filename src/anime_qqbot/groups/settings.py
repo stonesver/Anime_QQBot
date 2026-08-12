@@ -23,6 +23,7 @@ class GroupRuntimePolicy:
     chat_group_id: UUID
     timezone: str
     group_enabled: bool
+    general_chat_enabled: bool = False
     mention_enabled: bool = True
     direct_shortcuts_enabled: bool = False
     active_notifications_enabled: bool = True
@@ -82,6 +83,7 @@ class GroupRuntimeSettingsRepository:
         *,
         expected_version: int,
         now: datetime,
+        general_chat_enabled: bool | None = None,
         mention_enabled: bool | None = None,
         direct_shortcuts_enabled: bool | None = None,
         active_notifications_enabled: bool | None = None,
@@ -102,6 +104,11 @@ class GroupRuntimeSettingsRepository:
         current = await self.get_policy(chat_group_id)
         desired = replace(
             current,
+            general_chat_enabled=(
+                general_chat_enabled
+                if general_chat_enabled is not None
+                else current.general_chat_enabled
+            ),
             mention_enabled=(
                 mention_enabled if mention_enabled is not None else current.mention_enabled
             ),
@@ -266,6 +273,7 @@ def _policy(group: ChatGroup, setting: GroupRuntimeSetting | None) -> GroupRunti
         chat_group_id=group.id,
         timezone=group.timezone,
         group_enabled=group.enabled,
+        general_chat_enabled=setting.general_chat_enabled,
         mention_enabled=setting.mention_enabled,
         direct_shortcuts_enabled=setting.direct_shortcuts_enabled,
         active_notifications_enabled=setting.active_notifications_enabled,
@@ -292,6 +300,7 @@ def _setting_values(
 ) -> dict[str, object]:
     return {
         "chat_group_id": policy.chat_group_id,
+        "general_chat_enabled": policy.general_chat_enabled,
         "mention_enabled": policy.mention_enabled,
         "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
         "active_notifications_enabled": policy.active_notifications_enabled,

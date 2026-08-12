@@ -406,6 +406,9 @@ class AdminService:
                     "group_id": group.external_group_id,
                     "timezone": group.timezone,
                     "enabled": group.enabled,
+                    "general_chat_enabled": (
+                        setting.general_chat_enabled if setting else False
+                    ),
                     "mention_enabled": setting.mention_enabled if setting else True,
                     "direct_shortcuts_enabled": (
                         setting.direct_shortcuts_enabled if setting else False
@@ -813,6 +816,7 @@ class AdminService:
         if group is None:
             raise AdminNotFoundError("group not found")
         allowed = {
+            "general_chat_enabled",
             "mention_enabled",
             "direct_shortcuts_enabled",
             "active_notifications_enabled",
@@ -832,6 +836,7 @@ class AdminService:
         if unknown:
             raise AdminValidationError(f"unsupported group fields: {sorted(unknown)}")
         boolean_fields = (
+            "general_chat_enabled",
             "mention_enabled",
             "direct_shortcuts_enabled",
             "active_notifications_enabled",
@@ -876,6 +881,7 @@ class AdminService:
             group.id,
             expected_version=expected_version,
             now=datetime.now(UTC),
+            general_chat_enabled=_optional_bool(changes, "general_chat_enabled"),
             mention_enabled=_optional_bool(changes, "mention_enabled"),
             direct_shortcuts_enabled=_optional_bool(changes, "direct_shortcuts_enabled"),
             active_notifications_enabled=_optional_bool(changes, "active_notifications_enabled"),
@@ -1325,6 +1331,7 @@ def _optional_int(values: dict[str, object], key: str) -> int | None:
 
 def _policy_summary(policy: GroupRuntimePolicy) -> dict[str, object]:
     return {
+        "general_chat_enabled": policy.general_chat_enabled,
         "mention_enabled": policy.mention_enabled,
         "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
         "active_notifications_enabled": policy.active_notifications_enabled,
