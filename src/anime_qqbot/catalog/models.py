@@ -94,6 +94,7 @@ class AiringOccurrence:
     episode: int | None
     source: str
     updated_at: datetime | None = None
+    source_event_key: str | None = None
 
     def __post_init__(self) -> None:
         if self.air_at is not None and self.air_at.tzinfo is None:
@@ -144,6 +145,7 @@ class SourceName(StrEnum):
 
     BANGUMI = "bangumi"
     ANILIST = "anilist"
+    ANIMESCHEDULE = "animeschedule"
     MIKAN = "mikan"
 
 

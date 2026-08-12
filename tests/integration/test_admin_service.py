@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from anime_qqbot.application.admin_service import AdminService
+from anime_qqbot.application.admin_service import AdminService, AdminValidationError
 from anime_qqbot.groups.repository_v2 import ChatGroupRepository, GroupEvent
 from anime_qqbot.operations.napcat_status import NapCatProbeResult, NapCatStatusTracker
 from anime_qqbot.operations.runtime_status_repository import (
@@ -312,12 +312,47 @@ async def test_admin_mapping_policy_is_persisted_and_audited(session_factory) ->
         "query_budget": 8,
         "priority_window_days": 5,
         "retry_cooldown_hours": 12,
-        "matching_rule": "strict_title_first_air_date_unique",
+        "animeschedule_enabled": False,
+        "animeschedule_query_budget": 12,
+        "animeschedule_priority_window_days": 7,
+        "animeschedule_empty_cooldown_hours": 168,
+        "animeschedule_error_cooldown_hours": 168,
+        "matching_rule": "animeschedule_cross_id_then_anilist_strict",
     }
     assert (await service.mapping_policy())["query_budget"] == 8
     async with session_factory() as session:
         actions = (await session.execute(select(AdminAuditEvent.action))).scalars().all()
     assert actions == ["anilist_mapping.policy.update"]
+
+
+async def test_admin_requires_configured_token_before_enabling_animeschedule(
+    session_factory,
+) -> None:
+    with pytest.raises(AdminValidationError, match="token is not configured"):
+        await AdminService(session_factory).update_mapping_policy(
+            actor="owner-hash",
+            query_budget=12,
+            priority_window_days=7,
+            retry_cooldown_hours=24,
+            animeschedule_enabled=True,
+        )
+
+    service = AdminService(session_factory, animeschedule_token_configured=True)
+    updated = await service.update_mapping_policy(
+        actor="owner-hash",
+        query_budget=12,
+        priority_window_days=7,
+        retry_cooldown_hours=24,
+        animeschedule_enabled=True,
+        animeschedule_query_budget=9,
+        animeschedule_priority_window_days=5,
+        animeschedule_empty_cooldown_hours=120,
+        animeschedule_error_cooldown_hours=240,
+    )
+
+    assert updated["animeschedule_enabled"] is True
+    assert updated["animeschedule_query_budget"] == 9
+    assert (await service.mapping_policy())["animeschedule_token_configured"] is True
 
 
 async def test_admin_group_update_and_delivery_control_are_audited(

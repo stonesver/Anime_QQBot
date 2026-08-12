@@ -278,3 +278,12 @@ docker compose ps
   不要为省事长期降低账号安全；
 - 日志不得记录 Access Token、密码和完整用户消息；
 - 数据库恢复、删除卷、人工补发都按高风险操作处理。
+## AnimeSchedule 运行控制
+
+AnimeSchedule 是 AniList 映射桥和日本原始播出排期补充源，不是资源发布源；个人资源通知仍只由 Mikan 的实际发布触发。
+
+在 `.env` 中配置 `ANIMESCHEDULE_TOKEN`。首次启用可同时设置 `ANIMESCHEDULE_ENABLED=true`，也可以保持关闭，部署后由 Bot 持有者在 AstrBot 的“数据源与任务”页面启用。后台只显示 Token 是否已配置，不返回 Token 内容。
+
+默认每个目录周期只拉取一次 `raw` timetable，并以 12 次实际搜索请求为映射预算。429 会立即终止本轮；正常空结果和 5xx 默认冷却 168 小时。AnimeSchedule 故障不会停止 Bangumi、AniList、Mikan 或 QQ 被动查询。
+
+AnimeSchedule 与 AniList 对同一集的精确时间相差超过 6 小时时，被动查询仍采用 AnimeSchedule 原始播出时间，但主动开播提醒会暂停，避免来源冲突造成误发或补偿发送。

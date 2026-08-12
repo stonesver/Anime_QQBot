@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     bangumi_access_token: SecretStr | None = None
     bangumi_api_base_url: str = "https://api.bgm.tv"
     bangumi_api_fallback_urls: Annotated[tuple[str, ...], NoDecode] = ()
+    animeschedule_token: SecretStr | None = None
+    animeschedule_enabled: bool = False
+    animeschedule_query_budget: Annotated[int, Field(ge=1, le=120)] = 12
+    animeschedule_priority_window_days: Annotated[int, Field(ge=1, le=90)] = 7
+    animeschedule_empty_cooldown_hours: Annotated[int, Field(ge=1, le=720)] = 168
+    animeschedule_error_cooldown_hours: Annotated[int, Field(ge=1, le=720)] = 168
     default_timezone: str = "Asia/Shanghai"
     log_level: str = "INFO"
 
@@ -60,6 +66,8 @@ class Settings(BaseSettings):
     def validate_card_cache_limits(self) -> Settings:
         if self.card_cache_target_bytes >= self.card_cache_max_bytes:
             raise ValueError("card cache target must be below its maximum")
+        if self.animeschedule_enabled and self.animeschedule_token is None:
+            raise ValueError("AnimeSchedule cannot be enabled without ANIMESCHEDULE_TOKEN")
         return self
 
     @field_validator("bangumi_api_base_url")

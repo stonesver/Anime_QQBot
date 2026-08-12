@@ -13,7 +13,7 @@ AstrBot 多源群聊追番服务：通过 NapCat (OneBot 11) + AstrBot 接入普
 - `/番剧`、`@机器人` 和可按群开启的安全短命令；
 - 搜索结果使用 1..N 候选编号，不向群成员暴露内部 UUID；
 - 群内用户管理自己的订阅；QQ 群主/管理员不获得机器人配置权限；
-- Bangumi + AniList 双源数据融合与字段投影；
+- Bangumi + AniList 数据融合，并以 AnimeSchedule 跨站 ID 补映射、补充日本原始播出时间；
 - 搜索未命中及订阅后的持久化后台数据补全，不阻塞群消息回复；
 - 搜索唯一命中、详情和下一集使用本地真实海报生成 `1000 × 600` 放送信号卡片；
 - 海报缺失、损坏或渲染失败时直接返回等价结构化文本，不使用占位图；
@@ -33,11 +33,11 @@ AstrBot 多源群聊追番服务：通过 NapCat (OneBot 11) + AstrBot 接入普
 QQ小号 → NapCat/OneBot 11 → AstrBot → Anime Plugin → Anime Core → PostgreSQL
                                   ↑                        ↑
                                   └─ Worker (同步/规划/海报预热) ───┘
-                                        Bangumi / AniList / Mikan
+                                Bangumi / AnimeSchedule / AniList / Mikan
 ```
 
 本项目不包含 QQ 官方机器人、大模型依赖或自动下载。管理页嵌入 AstrBot WebUI，
-不新增独立 Web 服务或公网端口。群消息请求不访问 Bangumi、AniList、Mikan 或远程
+不新增独立 Web 服务或公网端口。群消息请求不访问 Bangumi、AnimeSchedule、AniList、Mikan 或远程
 海报；Worker 在后台把 confirmed Bangumi 海报缓存到 `card-assets`，失败时尝试 AniList。
 
 ## 文档

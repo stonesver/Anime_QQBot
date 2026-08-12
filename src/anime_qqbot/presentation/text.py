@@ -8,7 +8,12 @@ from zoneinfo import ZoneInfo
 
 from anime_qqbot.presentation.models import AnimeCardData
 
-SOURCE_LABELS = {"bangumi": "Bangumi", "anilist": "AniList", "mikan": "Mikan"}
+SOURCE_LABELS = {
+    "bangumi": "Bangumi",
+    "animeschedule": "AnimeSchedule",
+    "anilist": "AniList",
+    "mikan": "Mikan",
+}
 
 
 def format_card_fallback(data: AnimeCardData) -> str:

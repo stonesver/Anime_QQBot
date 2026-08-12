@@ -34,6 +34,7 @@ class OperatorJobRepository:
     ALLOWED_TYPES: ClassVar[set[str]] = {
         "sync_catalog",
         "sync_anilist_mapping",
+        "sync_animeschedule",
         "poll_mikan",
         "rebuild_projection",
         "retry_delivery",

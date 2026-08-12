@@ -31,6 +31,7 @@ from anime_qqbot.application.subscription_state import (
     SubscriptionStateKind,
     classify_subscription,
 )
+from anime_qqbot.catalog.airing_resolver import source_priority
 from anime_qqbot.catalog.repository_v2 import (
     AnimeRow,
     CatalogReadRepository,
@@ -134,17 +135,14 @@ async def _subscription_catalog_facts(
     timezone: ZoneInfo,
 ) -> _SubscriptionCatalogFacts:
     async with sessions() as session:
-        occurrences = (
-            (
-                await session.execute(
-                    select(AiringOccurrenceRow)
-                    .where(AiringOccurrenceRow.anime_id == anime_id)
-                    .order_by(AiringOccurrenceRow.air_date, AiringOccurrenceRow.air_at)
-                )
+        occurrence_rows = (
+            await session.execute(
+                select(AiringOccurrenceRow, ExternalEntry.provider)
+                .join(ExternalEntry, ExternalEntry.id == AiringOccurrenceRow.source_entry_id)
+                .where(AiringOccurrenceRow.anime_id == anime_id)
+                .order_by(AiringOccurrenceRow.air_date, AiringOccurrenceRow.air_at)
             )
-            .scalars()
-            .all()
-        )
+        ).all()
         source_rows = (
             await session.execute(
                 select(ExternalEntry.provider, SourceSnapshot)
@@ -159,11 +157,20 @@ async def _subscription_catalog_facts(
                 .where(AnimeSourceLink.anime_id == anime_id)
                 .where(AnimeSourceLink.status == "confirmed")
                 .where(ExternalEntry.disabled.is_(False))
-                .where(ExternalEntry.provider.in_(("bangumi", "anilist")))
+                .where(ExternalEntry.provider.in_(("bangumi", "anilist", "animeschedule")))
                 .order_by(ExternalEntry.provider, SourceSnapshot.version.desc())
             )
         ).all()
 
+    selected_occurrences: dict[str, tuple[AiringOccurrenceRow, str]] = {}
+    for occurrence, provider in occurrence_rows:
+        current = selected_occurrences.get(occurrence.episode_label)
+        if current is None or _prefer_schedule_row(occurrence, provider, current[0], current[1]):
+            selected_occurrences[occurrence.episode_label] = (occurrence, provider)
+    occurrences = sorted(
+        (value[0] for value in selected_occurrences.values()),
+        key=lambda value: (value.air_date, value.air_at or datetime.max.replace(tzinfo=UTC)),
+    )
     next_row = next(
         (row for row in occurrences if row.air_at is not None and row.air_at >= now),
         None,
@@ -324,8 +331,9 @@ async def _airing_rows_between(
     ).astimezone(UTC)
     async with sessions() as session:
         stmt = (
-            select(AiringOccurrenceRow, Anime)
+            select(AiringOccurrenceRow, Anime, ExternalEntry.provider)
             .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
+            .join(ExternalEntry, ExternalEntry.id == AiringOccurrenceRow.source_entry_id)
             .where(
                 or_(
                     and_(
@@ -345,18 +353,23 @@ async def _airing_rows_between(
             .order_by(AiringOccurrenceRow.air_date.asc(), AiringOccurrenceRow.air_at.asc())
         )
         rows = (await session.execute(stmt)).all()
-    selected: dict[tuple[UUID, str], tuple[AiringOccurrenceRow, Anime]] = {}
-    for occurrence, anime in rows:
+    selected: dict[tuple[UUID, str], tuple[AiringOccurrenceRow, Anime, str]] = {}
+    for occurrence, anime, provider in rows:
         key = (anime.id, occurrence.episode_label)
         current = selected.get(key)
-        if current is None or (current[0].air_at is None and occurrence.air_at is not None):
-            selected[key] = (occurrence, anime)
+        if current is None or _prefer_schedule_row(
+            occurrence,
+            provider,
+            current[0],
+            current[2],
+        ):
+            selected[key] = (occurrence, anime, provider)
     # A source can place consecutive episodes of a daily show on the same date.
     # The calendar is a "what is current today" view, so show one card per
     # normalized title/day and keep the newest numbered episode. This also
     # protects presentation from duplicate internal Anime rows that share a title.
     selected_by_title: dict[tuple[date, str], tuple[AiringOccurrenceRow, Anime]] = {}
-    for occurrence, anime in selected.values():
+    for occurrence, anime, _provider in selected.values():
         local_day = (
             occurrence.air_at.astimezone(timezone).date()
             if occurrence.air_at is not None
@@ -369,8 +382,10 @@ async def _airing_rows_between(
             else str(anime.id)
         )
         key = (local_day, title_key)
-        current = selected_by_title.get(key)
-        if current is None or _schedule_row_rank(occurrence) > _schedule_row_rank(current[0]):
+        current_title = selected_by_title.get(key)
+        if current_title is None or _schedule_row_rank(occurrence) > _schedule_row_rank(
+            current_title[0]
+        ):
             selected_by_title[key] = (occurrence, anime)
     chosen_rows = sorted(
         selected_by_title.values(),
@@ -409,6 +424,17 @@ def _schedule_row_rank(occurrence: AiringOccurrenceRow) -> tuple[int, bool, date
         occurrence.air_at is not None,
         occurrence.air_at or datetime.min.replace(tzinfo=UTC),
     )
+
+
+def _prefer_schedule_row(
+    candidate: AiringOccurrenceRow,
+    candidate_provider: str,
+    current: AiringOccurrenceRow,
+    current_provider: str,
+) -> bool:
+    if (candidate.air_at is not None) != (current.air_at is not None):
+        return candidate.air_at is not None
+    return source_priority(candidate_provider) < source_priority(current_provider)
 
 
 async def season_listing(
@@ -581,14 +607,29 @@ async def next_airing_for(
         return QueryResult(kind=IntentKind.NEXT, blocked=True)
     async with sessions() as session:
         stmt = (
-            select(AiringOccurrenceRow)
+            select(AiringOccurrenceRow, ExternalEntry.provider)
+            .join(ExternalEntry, ExternalEntry.id == AiringOccurrenceRow.source_entry_id)
             .where(AiringOccurrenceRow.anime_id == anime.id)
             .where(AiringOccurrenceRow.air_at.is_not(None))
             .where(AiringOccurrenceRow.air_at >= now)
             .order_by(AiringOccurrenceRow.air_at.asc())
-            .limit(1)
         )
-        occ = (await session.execute(stmt)).scalar_one_or_none()
+        rows = (await session.execute(stmt)).all()
+    selected: dict[str, tuple[AiringOccurrenceRow, str]] = {}
+    for occurrence, provider in rows:
+        current = selected.get(occurrence.episode_label)
+        if current is None or _prefer_schedule_row(
+            occurrence,
+            provider,
+            current[0],
+            current[1],
+        ):
+            selected[occurrence.episode_label] = (occurrence, provider)
+    occ = min(
+        (value[0] for value in selected.values()),
+        key=lambda value: value.air_at or datetime.max.replace(tzinfo=UTC),
+        default=None,
+    )
     return QueryResult(
         kind=IntentKind.NEXT,
         detail=anime,

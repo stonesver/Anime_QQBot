@@ -252,17 +252,24 @@ function renderMappingPolicy(policy) {
   const outcomes = Object.entries(policy.assessment_counts || {}).map(([reason, count]) =>
     `${escapeHtml(mappingReason(reason))} ${escapeHtml(count)}`).join(" · ") || "尚无严格映射失败记录";
   $("#mapping-policy-content").innerHTML = `<div class="policy-fields">
+    <label>AnimeSchedule 状态<span><input id="animeschedule-enabled" type="checkbox" ${policy.animeschedule_enabled ? "checked" : ""} /> 启用映射桥与原始排期</span><small>Token：${policy.animeschedule_token_configured ? "已配置" : "未配置"}；仅 Bot 持有者可修改。</small></label>
     <label>单轮搜索预算<input id="mapping-query-budget" type="number" min="1" max="30" value="${escapeHtml(policy.query_budget)}" /><small>实际 AniList 搜索请求数，上限 30。</small></label>
     <label>近期优先窗口<input id="mapping-priority-window" type="number" min="1" max="14" value="${escapeHtml(policy.priority_window_days)}" /><small>未来 1–14 天内的番剧优先尝试。</small></label>
     <label>失败重试冷却<input id="mapping-retry-cooldown" type="number" min="1" max="168" value="${escapeHtml(policy.retry_cooldown_hours)}" /><small>严格不匹配后等待的小时数。</small></label>
+    <label>AnimeSchedule 共享预算<input id="animeschedule-query-budget" type="number" min="1" max="30" value="${escapeHtml(policy.animeschedule_query_budget)}" /><small>桥接搜索与 AniList 后备共享的单轮上限。</small></label>
+    <label>AnimeSchedule 优先窗口<input id="animeschedule-priority-window" type="number" min="1" max="14" value="${escapeHtml(policy.animeschedule_priority_window_days)}" /><small>未来 1–14 天内的缺映射番剧优先处理。</small></label>
+    <label>空结果冷却<input id="animeschedule-empty-cooldown" type="number" min="1" max="720" value="${escapeHtml(policy.animeschedule_empty_cooldown_hours)}" /><small>正常空结果的等待小时数。</small></label>
+    <label>来源错误冷却<input id="animeschedule-error-cooldown" type="number" min="1" max="720" value="${escapeHtml(policy.animeschedule_error_cooldown_hours)}" /><small>5xx 或无效响应的等待小时数。</small></label>
   </div>
-  <p class="policy-note">严格规则：标题 + 首播日 + 唯一候选。最近一次 AniList 成功：${formatTime(policy.last_success_at)}；${policy.last_error ? `错误：${escapeHtml(policy.last_error)}` : "当前无错误摘要"}。</p>
+  <p class="policy-note">映射规则：AnimeSchedule 唯一精确标题 + 显式 AniList ID + 同年；失败时回到 AniList 标题、首播日严格匹配。</p>
+  <p class="policy-note">AnimeSchedule：最近成功 ${formatTime(policy.animeschedule_last_success_at)}；确认链接 ${escapeHtml(policy.animeschedule_confirmed_links)}；跨站补回 ${escapeHtml(policy.animeschedule_cross_id_links)}；精确排期 ${escapeHtml(policy.animeschedule_exact_occurrences)}；时间冲突 ${escapeHtml(policy.schedule_conflicts)}。${policy.animeschedule_last_error ? `错误：${escapeHtml(policy.animeschedule_last_error)}` : "当前无错误摘要"}。</p>
+  <p class="policy-note">AniList：最近成功 ${formatTime(policy.last_success_at)}；${policy.last_error ? `错误：${escapeHtml(policy.last_error)}` : "当前无错误摘要"}。</p>
   <p class="policy-note">失败归因：${outcomes}</p>
   <div class="action-row"><button class="button small ghost" data-action="save-mapping-policy">保存</button><button class="button small" data-action="save-and-sync-mapping-policy">保存并立即同步</button></div>`;
 }
 
 function mappingReason(reason) {
-  const labels = { no_search_candidate: "无搜索候选", first_air_date_mismatch: "首播日不一致", title_not_matched: "标题未精确匹配", multiple_exact_candidates: "候选不唯一", missing_bangumi_title_or_air_date: "Bangumi 数据不完整", candidate_sync_failed: "候选同步失败" };
+  const labels = { no_search_candidate: "无搜索候选", first_air_date_mismatch: "首播日不一致", title_not_matched: "标题未精确匹配", multiple_exact_candidates: "候选不唯一", missing_bangumi_title_or_air_date: "Bangumi 数据不完整", candidate_sync_failed: "候选同步失败", animeschedule_search_empty: "AnimeSchedule 空结果", animeschedule_search_error: "AnimeSchedule 来源错误", animeschedule_ambiguous: "AnimeSchedule 候选不唯一", animeschedule_cross_id_invalid: "跨站 ID 无效", animeschedule_year_mismatch: "首播年份冲突", animeschedule_nsfw_rejected: "成人内容已拒绝" };
   return labels[reason] || reason;
 }
 
@@ -347,11 +354,16 @@ document.addEventListener("click", async (event) => {
         query_budget: Number($("#mapping-query-budget").value),
         priority_window_days: Number($("#mapping-priority-window").value),
         retry_cooldown_hours: Number($("#mapping-retry-cooldown").value),
+        animeschedule_enabled: $("#animeschedule-enabled").checked,
+        animeschedule_query_budget: Number($("#animeschedule-query-budget").value),
+        animeschedule_priority_window_days: Number($("#animeschedule-priority-window").value),
+        animeschedule_empty_cooldown_hours: Number($("#animeschedule-empty-cooldown").value),
+        animeschedule_error_cooldown_hours: Number($("#animeschedule-error-cooldown").value),
       };
       await bridge.apiPost("mapping-policy", payload);
       if (target.dataset.action === "save-and-sync-mapping-policy") {
-        await bridge.apiPost("jobs/enqueue", { job_type: "sync_anilist_mapping", idempotency_key: `anilist-mapping-${Date.now()}`, parameters: {} });
-        toast("策略已保存，AniList 映射同步已创建");
+        await bridge.apiPost("jobs/enqueue", { job_type: payload.animeschedule_enabled ? "sync_animeschedule" : "sync_anilist_mapping", idempotency_key: `anime-mapping-${Date.now()}`, parameters: {} });
+        toast("策略已保存，映射与排期同步已创建");
       } else {
         toast("映射策略已保存，将在下一轮同步生效");
       }

@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from anime_qqbot.catalog.airing_resolver import source_priority
 from anime_qqbot.catalog.anilist_mapping_policy import AniListMappingPolicyRepository
 from anime_qqbot.content_operations.polls import POLL_THEMES, PollService, format_poll
 from anime_qqbot.content_operations.publications import ContentPublicationRepository
@@ -54,7 +55,12 @@ class AdminNotFoundError(LookupError):
 class AdminService:
     """Safe DTO-oriented operations API; no HTTP or AstrBot types."""
 
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        *,
+        animeschedule_token_configured: bool = False,
+    ) -> None:
         self._sessions = sessions
         self._groups = GroupRuntimeSettingsRepository(sessions)
         self._controls = DeliveryControlRepository(sessions)
@@ -65,6 +71,7 @@ class AdminService:
         self._polls = PollService(sessions)
         self._outbox = OutboxRepository(sessions)
         self._publications = ContentPublicationRepository(sessions)
+        self._animeschedule_token_configured = animeschedule_token_configured
 
     async def overview(self) -> dict[str, object]:
         now = datetime.now(UTC)
@@ -269,24 +276,24 @@ class AdminService:
             timezone = ZoneInfo("Asia/Shanghai")
             local_today = now.astimezone(timezone).date()
             occurrence_rows = (
-                (
-                    await session.execute(
-                        select(AiringOccurrenceRow)
-                        .where(AiringOccurrenceRow.anime_id.in_(anime_ids))
-                        .where(
-                            or_(
-                                AiringOccurrenceRow.air_at >= now,
-                                and_(
-                                    AiringOccurrenceRow.air_at.is_(None),
-                                    AiringOccurrenceRow.air_date >= local_today,
-                                ),
-                            )
+                await session.execute(
+                    select(AiringOccurrenceRow, ExternalEntry.provider)
+                    .join(
+                        ExternalEntry,
+                        ExternalEntry.id == AiringOccurrenceRow.source_entry_id,
+                    )
+                    .where(AiringOccurrenceRow.anime_id.in_(anime_ids))
+                    .where(
+                        or_(
+                            AiringOccurrenceRow.air_at >= now,
+                            and_(
+                                AiringOccurrenceRow.air_at.is_(None),
+                                AiringOccurrenceRow.air_date >= local_today,
+                            ),
                         )
                     )
                 )
-                .scalars()
-                .all()
-            )
+            ).all()
 
             snapshot_rows = (
                 await session.execute(
@@ -311,23 +318,28 @@ class AdminService:
         for anime_id, synced_at in snapshot_rows:
             if synced_at is not None:
                 sync_times[anime_id] = synced_at
-        occurrences: dict[tuple[UUID, str], AiringOccurrenceRow] = {}
-        for occurrence in occurrence_rows:
+        occurrences: dict[tuple[UUID, str], tuple[AiringOccurrenceRow, str]] = {}
+        for occurrence, provider in occurrence_rows:
             key = (occurrence.anime_id, occurrence.episode_label)
             current = occurrences.get(key)
-            if current is None or (current.air_at is None and occurrence.air_at is not None):
-                occurrences[key] = occurrence
+            if current is None or _admin_prefers_occurrence(
+                occurrence,
+                provider,
+                current[0],
+                current[1],
+            ):
+                occurrences[key] = (occurrence, provider)
             synced_at = sync_times.get(occurrence.anime_id)
             if synced_at is None or occurrence.updated_at > synced_at:
                 sync_times[occurrence.anime_id] = occurrence.updated_at
 
         next_by_anime: dict[UUID, AiringOccurrenceRow] = {}
-        for occurrence in occurrences.values():
-            current = next_by_anime.get(occurrence.anime_id)
-            if current is None or _catalog_occurrence_key(
+        for occurrence, _provider in occurrences.values():
+            current_occurrence = next_by_anime.get(occurrence.anime_id)
+            if current_occurrence is None or _catalog_occurrence_key(
                 occurrence,
                 timezone,
-            ) < _catalog_occurrence_key(current, timezone):
+            ) < _catalog_occurrence_key(current_occurrence, timezone):
                 next_by_anime[occurrence.anime_id] = occurrence
 
         items = []
@@ -593,6 +605,7 @@ class AdminService:
         policy = await self._anilist_mapping_policy.get()
         async with self._sessions() as session:
             state = await session.get(SourceSyncState, "anilist")
+            animeschedule_state = await session.get(SourceSyncState, "animeschedule")
             outcomes = (
                 await session.execute(
                     select(AniListMappingAssessment.reason, func.count())
@@ -600,14 +613,76 @@ class AdminService:
                     .order_by(AniListMappingAssessment.reason)
                 )
             ).all()
+            animeschedule_links = await session.scalar(
+                select(func.count())
+                .select_from(AnimeSourceLink)
+                .join(ExternalEntry, ExternalEntry.id == AnimeSourceLink.external_entry_id)
+                .where(ExternalEntry.provider == "animeschedule")
+                .where(AnimeSourceLink.status == "confirmed")
+            )
+            cross_id_links = await session.scalar(
+                select(func.count())
+                .select_from(AnimeSourceLink)
+                .join(ExternalEntry, ExternalEntry.id == AnimeSourceLink.external_entry_id)
+                .where(AnimeSourceLink.method == "animeschedule_cross_id_v1")
+                .where(AnimeSourceLink.status == "confirmed")
+                .where(ExternalEntry.provider == "anilist")
+            )
+            exact_occurrences = await session.scalar(
+                select(func.count())
+                .select_from(AiringOccurrenceRow)
+                .join(ExternalEntry, ExternalEntry.id == AiringOccurrenceRow.source_entry_id)
+                .where(ExternalEntry.provider == "animeschedule")
+                .where(AiringOccurrenceRow.precision == "exact")
+            )
+            exact_schedule_rows = (
+                await session.execute(
+                    select(
+                        AiringOccurrenceRow.anime_id,
+                        AiringOccurrenceRow.episode_label,
+                        ExternalEntry.provider,
+                        AiringOccurrenceRow.air_at,
+                    )
+                    .join(ExternalEntry, ExternalEntry.id == AiringOccurrenceRow.source_entry_id)
+                    .where(ExternalEntry.provider.in_(("animeschedule", "anilist")))
+                    .where(AiringOccurrenceRow.air_at.is_not(None))
+                )
+            ).all()
+        exact_by_episode: dict[tuple[UUID, str], dict[str, datetime]] = {}
+        for anime_id, episode_label, provider, air_at in exact_schedule_rows:
+            if air_at is not None:
+                exact_by_episode.setdefault((anime_id, episode_label), {})[provider] = air_at
+        schedule_conflicts = sum(
+            1
+            for values in exact_by_episode.values()
+            if "animeschedule" in values
+            and "anilist" in values
+            and abs(values["animeschedule"] - values["anilist"]) > timedelta(hours=6)
+        )
         return {
             "query_budget": policy.query_budget,
             "priority_window_days": policy.priority_window_days,
             "retry_cooldown_hours": policy.retry_cooldown_hours,
-            "matching_rule": "strict_title_first_air_date_unique",
+            "animeschedule_enabled": policy.animeschedule_enabled,
+            "animeschedule_query_budget": policy.animeschedule_query_budget,
+            "animeschedule_priority_window_days": policy.animeschedule_priority_window_days,
+            "animeschedule_empty_cooldown_hours": policy.animeschedule_empty_cooldown_hours,
+            "animeschedule_error_cooldown_hours": policy.animeschedule_error_cooldown_hours,
+            "animeschedule_token_configured": self._animeschedule_token_configured,
+            "matching_rule": "animeschedule_cross_id_then_anilist_strict",
             "last_success_at": _iso(state.last_success_at) if state else None,
             "last_error": _safe_error(state.last_error) if state else None,
             "assessment_counts": {str(reason): int(count) for reason, count in outcomes},
+            "animeschedule_last_success_at": (
+                _iso(animeschedule_state.last_success_at) if animeschedule_state else None
+            ),
+            "animeschedule_last_error": (
+                _safe_error(animeschedule_state.last_error) if animeschedule_state else None
+            ),
+            "animeschedule_confirmed_links": int(animeschedule_links or 0),
+            "animeschedule_cross_id_links": int(cross_id_links or 0),
+            "animeschedule_exact_occurrences": int(exact_occurrences or 0),
+            "schedule_conflicts": schedule_conflicts,
         }
 
     async def update_mapping_policy(
@@ -617,16 +692,53 @@ class AdminService:
         query_budget: object,
         priority_window_days: object,
         retry_cooldown_hours: object,
+        animeschedule_enabled: object | None = None,
+        animeschedule_query_budget: object | None = None,
+        animeschedule_priority_window_days: object | None = None,
+        animeschedule_empty_cooldown_hours: object | None = None,
+        animeschedule_error_cooldown_hours: object | None = None,
     ) -> dict[str, object]:
+        before = await self._anilist_mapping_policy.get()
+        enabled = (
+            before.animeschedule_enabled if animeschedule_enabled is None else animeschedule_enabled
+        )
+        if not isinstance(enabled, bool):
+            raise AdminValidationError("animeschedule_enabled must be a boolean")
+        if enabled and not self._animeschedule_token_configured:
+            raise AdminValidationError("AnimeSchedule token is not configured")
         values = {
             "query_budget": query_budget,
             "priority_window_days": priority_window_days,
             "retry_cooldown_hours": retry_cooldown_hours,
+            "animeschedule_query_budget": (
+                before.animeschedule_query_budget
+                if animeschedule_query_budget is None
+                else animeschedule_query_budget
+            ),
+            "animeschedule_priority_window_days": (
+                before.animeschedule_priority_window_days
+                if animeschedule_priority_window_days is None
+                else animeschedule_priority_window_days
+            ),
+            "animeschedule_empty_cooldown_hours": (
+                before.animeschedule_empty_cooldown_hours
+                if animeschedule_empty_cooldown_hours is None
+                else animeschedule_empty_cooldown_hours
+            ),
+            "animeschedule_error_cooldown_hours": (
+                before.animeschedule_error_cooldown_hours
+                if animeschedule_error_cooldown_hours is None
+                else animeschedule_error_cooldown_hours
+            ),
         }
         limits = {
             "query_budget": (1, 30),
             "priority_window_days": (1, 14),
             "retry_cooldown_hours": (1, 168),
+            "animeschedule_query_budget": (1, 30),
+            "animeschedule_priority_window_days": (1, 14),
+            "animeschedule_empty_cooldown_hours": (1, 720),
+            "animeschedule_error_cooldown_hours": (1, 720),
         }
         parsed: dict[str, int] = {}
         for name, value in values.items():
@@ -634,11 +746,15 @@ class AdminService:
             if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
                 raise AdminValidationError(f"{name} must be an integer between {low} and {high}")
             parsed[name] = value
-        before = await self._anilist_mapping_policy.get()
         current = await self._anilist_mapping_policy.update(
             query_budget=parsed["query_budget"],
             priority_window_days=parsed["priority_window_days"],
             retry_cooldown_hours=parsed["retry_cooldown_hours"],
+            animeschedule_enabled=enabled,
+            animeschedule_query_budget=parsed["animeschedule_query_budget"],
+            animeschedule_priority_window_days=parsed["animeschedule_priority_window_days"],
+            animeschedule_empty_cooldown_hours=parsed["animeschedule_empty_cooldown_hours"],
+            animeschedule_error_cooldown_hours=parsed["animeschedule_error_cooldown_hours"],
         )
         await self._audit.append(
             actor=actor,
@@ -653,7 +769,7 @@ class AdminService:
         )
         return {
             **current.__dict__,
-            "matching_rule": "strict_title_first_air_date_unique",
+            "matching_rule": "animeschedule_cross_id_then_anilist_strict",
         }
 
     async def jobs(self) -> list[dict[str, object]]:
@@ -1177,6 +1293,17 @@ def _catalog_occurrence_key(
         local = occurrence.air_at.astimezone(timezone)
         return local.date().isoformat(), local.time().isoformat()
     return occurrence.air_date.isoformat(), "99:99:99"
+
+
+def _admin_prefers_occurrence(
+    candidate: AiringOccurrenceRow,
+    candidate_provider: str,
+    current: AiringOccurrenceRow,
+    current_provider: str,
+) -> bool:
+    if (candidate.air_at is not None) != (current.air_at is not None):
+        return candidate.air_at is not None
+    return source_priority(candidate_provider) < source_priority(current_provider)
 
 
 def _uuid(value: str) -> UUID:

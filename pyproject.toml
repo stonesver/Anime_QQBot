@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "anime-qqbot"
 version = "0.4.0"
-description = "AstrBot-powered multi-source QQ anime tracking bot (Bangumi + AniList + Mikan)."
+description = "AstrBot-powered QQ anime tracker (Bangumi + AnimeSchedule + AniList + Mikan)."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }

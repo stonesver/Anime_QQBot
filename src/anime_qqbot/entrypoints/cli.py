@@ -35,8 +35,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from anime_qqbot.catalog.adapters.anilist import AniListClient, AniListConfig
+from anime_qqbot.catalog.adapters.animeschedule import (
+    AnimeScheduleClient,
+    AnimeScheduleConfig,
+)
 from anime_qqbot.catalog.adapters.bangumi import BangumiClient
 from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
+from anime_qqbot.catalog.airing_resolver import SourcedAiring, resolve_airing
 from anime_qqbot.catalog.anilist_mapping import (
     AniListDiscoveryResult,
     AniListLinkDiscoveryService,
@@ -47,10 +52,11 @@ from anime_qqbot.catalog.anilist_mapping_policy import (
 )
 from anime_qqbot.catalog.bangumi_sync import BangumiCatalogSync
 from anime_qqbot.catalog.enrichment import CatalogEnrichmentRunner
-from anime_qqbot.catalog.models import LinkEvidenceType, LinkStatus
+from anime_qqbot.catalog.models import AiringOccurrence, LinkEvidenceType, LinkStatus
 from anime_qqbot.catalog.projection import project_anime
 from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
 from anime_qqbot.catalog.sync_anilist import AniListSyncService
+from anime_qqbot.catalog.sync_animeschedule import AnimeScheduleSyncService
 from anime_qqbot.clock import SystemClock
 from anime_qqbot.content_operations.planner import ContentOperationsPlanner
 from anime_qqbot.entrypoints.health import create_health_app
@@ -81,6 +87,7 @@ from anime_qqbot.subscriptions.repository_v2 import FollowRepository
 WORKER_HEARTBEAT_ROLE = "worker"
 SOURCE_BANGUMI = "bangumi"
 SOURCE_ANILIST = "anilist"
+SOURCE_ANIMESCHEDULE = "animeschedule"
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +119,12 @@ class WorkerComponents:
     engine: AsyncEngine
     bangumi_client: BangumiClient
     anilist_client: AniListClient
+    animeschedule_client: AnimeScheduleClient | None
     mikan_client: MikanClient
     bangumi_sync: BangumiCatalogSync
     anilist_sync: AniListSyncService
     anilist_discovery: AniListLinkDiscoveryService
+    animeschedule_sync: AnimeScheduleSyncService | None
     planner: AiringPlanner
     content_planner: ContentOperationsPlanner
     mikan_pipeline: MikanReleasePipeline
@@ -148,12 +157,32 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         config=AniListConfig(user_agent=settings.bangumi_user_agent),
         clock=clock,
     )
+    animeschedule_client = (
+        AnimeScheduleClient(
+            config=AnimeScheduleConfig(
+                token=settings.animeschedule_token,
+                user_agent=settings.bangumi_user_agent,
+            )
+        )
+        if settings.animeschedule_token is not None
+        else None
+    )
 
     write_repo = CatalogWriteRepository(sessions)
     bangumi_sync = BangumiCatalogSync(
         bangumi=bangumi_client,
         write_repo=write_repo,
         clock=clock,
+    )
+    animeschedule_sync = (
+        AnimeScheduleSyncService(
+            sessions=sessions,
+            client=animeschedule_client,
+            write_repo=write_repo,
+            clock=clock,
+        )
+        if animeschedule_client is not None
+        else None
     )
     anilist_sync = AniListSyncService(
         anilist=anilist_client,
@@ -165,6 +194,7 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         anilist=anilist_client,
         sync=anilist_sync,
         clock=clock,
+        animeschedule=animeschedule_client,
     )
     follows = FollowRepository(sessions)
     outbox = OutboxRepository(sessions)
@@ -192,10 +222,12 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         engine=engine,
         bangumi_client=bangumi_client,
         anilist_client=anilist_client,
+        animeschedule_client=animeschedule_client,
         mikan_client=mikan_client,
         bangumi_sync=bangumi_sync,
         anilist_sync=anilist_sync,
         anilist_discovery=anilist_discovery,
+        animeschedule_sync=animeschedule_sync,
         planner=planner,
         content_planner=content_planner,
         mikan_pipeline=mikan_pipeline,
@@ -240,7 +272,10 @@ async def _run_source_heartbeats(components: WorkerComponents) -> None:
     """
     # Both sources write source_sync_states on tick; we keep this
     # method explicit so the worker log always mentions source names.
-    logger.info("worker.source_heartbeats", extra={"sources": [SOURCE_BANGUMI, SOURCE_ANILIST]})
+    logger.info(
+        "worker.source_heartbeats",
+        extra={"sources": [SOURCE_BANGUMI, SOURCE_ANILIST, SOURCE_ANIMESCHEDULE]},
+    )
 
 
 async def _ingest_known_subjects(
@@ -542,6 +577,15 @@ async def _sync_anilist_catalog(
 ) -> AniListDiscoveryResult:
     if mapping_policy is None:
         result = await components.anilist_discovery.run_once(limit=discovery_limit)
+    elif mapping_policy.animeschedule_enabled:
+        result = await components.anilist_discovery.run_once(
+            limit=mapping_policy.animeschedule_query_budget,
+            priority_window_days=mapping_policy.animeschedule_priority_window_days,
+            retry_cooldown_hours=mapping_policy.retry_cooldown_hours,
+            animeschedule_enabled=True,
+            animeschedule_empty_cooldown_hours=(mapping_policy.animeschedule_empty_cooldown_hours),
+            animeschedule_error_cooldown_hours=(mapping_policy.animeschedule_error_cooldown_hours),
+        )
     else:
         result = await components.anilist_discovery.run_once(
             limit=mapping_policy.query_budget,
@@ -566,7 +610,7 @@ async def _plan_airing_reminders(components: WorkerComponents, now: datetime) ->
     created = 0
     horizon_end = now + timedelta(minutes=10)
     async with components.sessions() as session:
-        stmt = (
+        due_stmt = (
             select(AiringOccurrenceRow, Anime)
             .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
             .where(AiringOccurrenceRow.air_at.is_not(None))
@@ -574,9 +618,53 @@ async def _plan_airing_reminders(components: WorkerComponents, now: datetime) ->
             .where(AiringOccurrenceRow.air_at <= horizon_end)
             .where(Anime.disabled.is_(False))
         )
-        rows = (await session.execute(stmt)).all()
+        due_rows = (await session.execute(due_stmt)).all()
+        keys = {(occ.anime_id, occ.episode_label) for occ, _anime in due_rows}
+        if not keys:
+            return 0
+        anime_ids = {anime_id for anime_id, _episode in keys}
+        all_rows = (
+            await session.execute(
+                select(AiringOccurrenceRow, Anime, ExternalEntry)
+                .join(Anime, Anime.id == AiringOccurrenceRow.anime_id)
+                .join(ExternalEntry, ExternalEntry.id == AiringOccurrenceRow.source_entry_id)
+                .where(AiringOccurrenceRow.anime_id.in_(anime_ids))
+                .where(AiringOccurrenceRow.air_at.is_not(None))
+            )
+        ).all()
+    grouped: dict[tuple[UUID, str], list[tuple[AiringOccurrenceRow, Anime, ExternalEntry]]] = {}
+    for occ, anime, entry in all_rows:
+        key = (occ.anime_id, occ.episode_label)
+        if key in keys:
+            grouped.setdefault(key, []).append((occ, anime, entry))
     next_by_anime: dict[UUID, tuple[AiringOccurrenceRow, Anime]] = {}
-    for occ, anime in rows:
+    for candidates in grouped.values():
+        sourced = [
+            SourcedAiring(
+                provider=entry.provider,
+                occurrence=AiringOccurrence(
+                    subject_id=0,
+                    air_date=occ.air_date,
+                    air_at=occ.air_at,
+                    episode=(int(occ.episode_label) if occ.episode_label.isdigit() else None),
+                    source=entry.provider,
+                    updated_at=occ.updated_at,
+                    source_event_key=occ.source_event_key,
+                ),
+            )
+            for occ, _anime, entry in candidates
+        ]
+        resolution = resolve_airing(sourced)
+        if not resolution.proactive_allowed or resolution.selected is None:
+            continue
+        selected = next(
+            row
+            for row in candidates
+            if row[0].source_event_key == resolution.selected.occurrence.source_event_key
+        )
+        occ, anime, _entry = selected
+        if occ.air_at is None or not now <= occ.air_at <= horizon_end:
+            continue
         current = next_by_anime.get(anime.id)
         if current is None or (occ.air_at, occ.id) < (current[0].air_at, current[0].id):
             next_by_anime[anime.id] = (occ, anime)
@@ -774,6 +862,18 @@ async def _serve_health(sessions: async_sessionmaker[AsyncSession]) -> None:
 async def run_worker() -> None:
     settings = Settings()  # type: ignore[call-arg]
     components = await _build_components(settings)
+    mapping_policy_repo = AniListMappingPolicyRepository(components.sessions)
+    if await mapping_policy_repo.is_missing():
+        await mapping_policy_repo.update(
+            query_budget=12,
+            priority_window_days=7,
+            retry_cooldown_hours=24,
+            animeschedule_enabled=settings.animeschedule_enabled,
+            animeschedule_query_budget=settings.animeschedule_query_budget,
+            animeschedule_priority_window_days=(settings.animeschedule_priority_window_days),
+            animeschedule_empty_cooldown_hours=(settings.animeschedule_empty_cooldown_hours),
+            animeschedule_error_cooldown_hours=(settings.animeschedule_error_cooldown_hours),
+        )
     await _record_heartbeat(
         components.sessions,
         worker_id="worker-1",
@@ -864,6 +964,18 @@ async def run_worker() -> None:
             "rows_deferred": result.rows_deferred,
         }
 
+    async def operator_sync_animeschedule(_parameters: dict[str, object]) -> dict[str, object]:
+        if components.animeschedule_sync is None:
+            raise RuntimeError("AnimeSchedule token is not configured")
+        timetable = await components.animeschedule_sync.sync_timetable()
+        mapping = await operator_sync_anilist_mapping({})
+        return {
+            **mapping,
+            "timetable_entries": timetable.timetable_entries,
+            "linked_entries": timetable.linked_entries,
+            "occurrences_written": timetable.occurrences_written,
+        }
+
     async def operator_projection(_parameters: dict[str, object]) -> dict[str, object]:
         return {"updated": await _project_fresh_snapshots(components)}
 
@@ -881,6 +993,7 @@ async def run_worker() -> None:
         {
             "sync_catalog": operator_sync_catalog,
             "sync_anilist_mapping": operator_sync_anilist_mapping,
+            "sync_animeschedule": operator_sync_animeschedule,
             "poll_mikan": operator_poll_mikan,
             "rebuild_projection": operator_projection,
             "cleanup_sessions": operator_cleanup,
@@ -892,6 +1005,17 @@ async def run_worker() -> None:
         while True:
             now = components.clock.now()
             if _catalog_sync_is_due(now, next_catalog_sync_at):
+                mapping_policy = await AniListMappingPolicyRepository(components.sessions).get()
+                if mapping_policy.animeschedule_enabled:
+                    try:
+                        if components.animeschedule_sync is None:
+                            raise RuntimeError("AnimeSchedule token is not configured")
+                        await components.animeschedule_sync.sync_timetable()
+                    except Exception as exc:
+                        logger.exception(
+                            "worker.animeschedule.timetable",
+                            extra={"error": str(exc)},
+                        )
                 try:
                     await _sync_bangumi_catalog(
                         components,
@@ -901,7 +1025,6 @@ async def run_worker() -> None:
                 except Exception as exc:
                     logger.exception("worker.bangumi.sync", extra={"error": str(exc)})
                 try:
-                    mapping_policy = await AniListMappingPolicyRepository(components.sessions).get()
                     await _sync_anilist_catalog(
                         components,
                         discovery_limit=20,
@@ -986,6 +1109,8 @@ async def run_worker() -> None:
         await asyncio.gather(health, return_exceptions=True)
         await components.bangumi_client.aclose()
         await components.anilist_client.aclose()
+        if components.animeschedule_client is not None:
+            await components.animeschedule_client.aclose()
         await components.mikan_client.aclose()
         await components.poster_cache.aclose()
         await components.engine.dispose()
@@ -1054,6 +1179,7 @@ def main() -> None:
 
 __all__ = [
     "SOURCE_ANILIST",
+    "SOURCE_ANIMESCHEDULE",
     "SOURCE_BANGUMI",
     "main",
     "migrate",

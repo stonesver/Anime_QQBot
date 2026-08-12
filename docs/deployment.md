@@ -205,3 +205,8 @@ sudo ./scripts/deploy-acr.sh --refresh-vendors
 
 正常发布结果应包含 `NapCat restart detected: no`。若为 `yes`，先核对是否执行了
 vendor 刷新、NapCat 是否原本停止或容器是否发生异常重启，再进行 QQ 登录。
+## AnimeSchedule 配置
+
+发布镜像前确认服务器 `.env` 已包含 `ANIMESCHEDULE_TOKEN`，且该文件不进入镜像和版本库。`ANIMESCHEDULE_ENABLED` 默认是 `false`；升级完成、后台确认 Token 为“已配置”后，再由 Bot 持有者启用并手动触发一次同步。
+
+数据库迁移 `0017_animeschedule_integration` 为已有映射策略增加 AnimeSchedule 控制字段，并允许 `sync_animeschedule` 管理任务。回滚应用版本前应先在后台关闭 AnimeSchedule；旧的 Bangumi、AniList、Mikan 数据和个人资源通知不依赖新来源。

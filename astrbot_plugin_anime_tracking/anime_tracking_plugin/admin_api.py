@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Awaitable, Callable
 from hashlib import sha256
 from typing import Any
@@ -30,6 +31,10 @@ except ModuleNotFoundError:
 
 
 PLUGIN_NAME = "anime_tracking"
+
+
+def _animeschedule_token_configured() -> bool:
+    return bool(os.environ.get("ANIMESCHEDULE_TOKEN", "").strip())
 
 
 class AdminWebAPI:
@@ -136,6 +141,11 @@ class AdminWebAPI:
             query_budget=payload.get("query_budget"),
             priority_window_days=payload.get("priority_window_days"),
             retry_cooldown_hours=payload.get("retry_cooldown_hours"),
+            animeschedule_enabled=payload.get("animeschedule_enabled"),
+            animeschedule_query_budget=payload.get("animeschedule_query_budget"),
+            animeschedule_priority_window_days=payload.get("animeschedule_priority_window_days"),
+            animeschedule_empty_cooldown_hours=payload.get("animeschedule_empty_cooldown_hours"),
+            animeschedule_error_cooldown_hours=payload.get("animeschedule_error_cooldown_hours"),
         )
 
     async def jobs(self) -> object:
@@ -246,7 +256,10 @@ class AdminWebAPI:
         if not bool(lifecycle.config.get("admin_page_writes_enabled", False)):
             return error_response("admin writes are disabled", status_code=403)
         try:
-            service = AdminService(lifecycle.sessions)
+            service = AdminService(
+                lifecycle.sessions,
+                animeschedule_token_configured=_animeschedule_token_configured(),
+            )
             kwargs["actor"] = actor
             result = await getattr(service, method)(*args, **kwargs)
             return json_response({"ok": True, "result": result})
@@ -259,7 +272,10 @@ class AdminWebAPI:
 
     async def _service(self) -> AdminService:
         lifecycle = await self._lifecycle_provider()
-        return AdminService(lifecycle.sessions)
+        return AdminService(
+            lifecycle.sessions,
+            animeschedule_token_configured=_animeschedule_token_configured(),
+        )
 
     def _actor(self) -> str | None:
         username = getattr(request, "username", None)

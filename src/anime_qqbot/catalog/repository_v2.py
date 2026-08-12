@@ -239,7 +239,7 @@ class CatalogWriteRepository:
                 episode_label = (
                     f"{occurrence.episode:02d}" if occurrence.episode is not None else "?"
                 )
-                event_key = (
+                event_key = occurrence.source_event_key or (
                     f"{occurrence.source}:{episode_label}:"
                     f"{occurrence.air_at.isoformat() if occurrence.air_at else occurrence.air_date}"
                 )

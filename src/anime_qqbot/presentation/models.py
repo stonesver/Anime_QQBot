@@ -5,7 +5,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from uuid import UUID
 
-SOURCE_ORDER = ("bangumi", "anilist", "mikan")
+SOURCE_ORDER = ("bangumi", "animeschedule", "anilist", "mikan")
 
 
 class CardScene(StrEnum):

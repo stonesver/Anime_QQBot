@@ -225,12 +225,39 @@ class AniListMappingPolicy(Base):
             "retry_cooldown_hours >= 1 AND retry_cooldown_hours <= 168",
             name="ck_anilist_policy_cooldown",
         ),
+        CheckConstraint(
+            "animeschedule_query_budget BETWEEN 1 AND 30",
+            name="ck_anilist_policy_animeschedule_budget",
+        ),
+        CheckConstraint(
+            "animeschedule_priority_window_days BETWEEN 1 AND 14",
+            name="ck_anilist_policy_animeschedule_window",
+        ),
+        CheckConstraint(
+            "animeschedule_empty_cooldown_hours BETWEEN 1 AND 720",
+            name="ck_anilist_policy_animeschedule_empty_cooldown",
+        ),
+        CheckConstraint(
+            "animeschedule_error_cooldown_hours BETWEEN 1 AND 720",
+            name="ck_anilist_policy_animeschedule_error_cooldown",
+        ),
     )
 
     key: Mapped[str] = mapped_column(String(32), primary_key=True)
     query_budget: Mapped[int] = mapped_column(Integer, nullable=False)
     priority_window_days: Mapped[int] = mapped_column(Integer, nullable=False)
     retry_cooldown_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    animeschedule_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    animeschedule_query_budget: Mapped[int] = mapped_column(Integer, nullable=False, default=12)
+    animeschedule_priority_window_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=7
+    )
+    animeschedule_empty_cooldown_hours: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=168
+    )
+    animeschedule_error_cooldown_hours: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=168
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

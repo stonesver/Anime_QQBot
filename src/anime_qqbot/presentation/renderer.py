@@ -183,7 +183,12 @@ class AnimeCardRenderer:
             draw.text((440, stat_y), "  ·  ".join(stats), fill=INK, font=body_font)
         chip_x = 440
         for source_name in data.sources:
-            label = {"bangumi": "BANGUMI", "anilist": "ANILIST", "mikan": "MIKAN"}[source_name]
+            label = {
+                "bangumi": "BANGUMI",
+                "animeschedule": "ANIMESCHEDULE",
+                "anilist": "ANILIST",
+                "mikan": "MIKAN",
+            }[source_name]
             box = draw.textbbox((0, 0), label, font=mono_small)
             width = box[2] - box[0] + 28
             draw.rounded_rectangle(
