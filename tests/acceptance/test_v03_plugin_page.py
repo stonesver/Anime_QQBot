@@ -22,7 +22,16 @@ def test_page_covers_all_operations_sections_and_mobile() -> None:
     script = (PAGE / "app.js").read_text()
     styles = (PAGE / "styles.css").read_text()
 
-    for label in ("总览", "番剧目录", "群设置", "订阅", "映射", "通知", "数据源"):
+    for label in (
+        "总览",
+        "番剧目录",
+        "群设置",
+        "内容运营",
+        "订阅",
+        "映射",
+        "通知",
+        "数据源",
+    ):
         assert label in html
     assert "560px" in styles
     assert "prefers-reduced-motion" in styles

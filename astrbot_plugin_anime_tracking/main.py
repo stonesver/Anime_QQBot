@@ -18,6 +18,7 @@ by AstrBot's Docker image).
 from __future__ import annotations
 
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ except ModuleNotFoundError:
     filter = _FakeFilter()  # type: ignore[misc]  # noqa: A001
 
 
+from anime_qqbot.content_operations.polls import PollService, format_poll
 from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
 
 from .anime_tracking_plugin.adapter import EventAdapter, Reply
@@ -200,6 +202,65 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
     async def _handle_mapping(self, event: AstrMessageEvent) -> MessageEventResult:
         yield await self._dispatch_result(event)
 
+    @_group_route.command("投票")  # type: ignore[union-attr]
+    async def _handle_poll(self, event: AstrMessageEvent) -> MessageEventResult:
+        lifecycle = await self._ensure_lifecycle()
+        cooldown = self._interactive_cooldown(event, lifecycle)
+        if cooldown is not None:
+            yield event.plain_result(cooldown)
+            return
+        if lifecycle.sessions is None:
+            yield event.plain_result("投票服务暂不可用。")
+            return
+        polls = PollService(lifecycle.sessions)
+        parts = str(getattr(event, "message_str", "")).strip().split()
+        try:
+            position = next(
+                (int(value) for value in reversed(parts) if value.isdigit()),
+                None,
+            )
+            if position is None:
+                current = await polls.current(
+                    external_group_id=self._group_id(event),
+                    now=datetime.now(UTC),
+                )
+                text = format_poll(current) if current is not None else "当前没有进行中的番剧投票。"
+            else:
+                result = await polls.vote(
+                    external_group_id=self._group_id(event),
+                    external_user_id=self._sender_id(event),
+                    position=position,
+                    now=datetime.now(UTC),
+                )
+                text = (
+                    f"已投给 {result.poll.candidates[position - 1].title}。\n"
+                    f"当前票数：{result.counts[position]}"
+                )
+        except (ValueError, IndexError):
+            text = "投票失败：请确认当前有进行中的投票，并发送 /番剧 投票 <编号>。"
+        yield event.plain_result(text)
+
+    @_group_route.command("取消投票")  # type: ignore[union-attr]
+    async def _handle_cancel_poll(self, event: AstrMessageEvent) -> MessageEventResult:
+        lifecycle = await self._ensure_lifecycle()
+        cooldown = self._interactive_cooldown(event, lifecycle)
+        if cooldown is not None:
+            yield event.plain_result(cooldown)
+            return
+        if lifecycle.sessions is None:
+            yield event.plain_result("投票服务暂不可用。")
+            return
+        try:
+            removed = await PollService(lifecycle.sessions).cancel_vote(
+                external_group_id=self._group_id(event),
+                external_user_id=self._sender_id(event),
+                now=datetime.now(UTC),
+            )
+            text = "已取消你的投票。" if removed else "你还没有参与当前投票。"
+        except ValueError:
+            text = "当前没有进行中的番剧投票。"
+        yield event.plain_result(text)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -220,23 +281,30 @@ class AnimeTrackingPlugin(Star):  # type: ignore[name-defined]
             schedule_reply_builder=lifecycle.schedule_reply_factory,
         )
 
+    def _interactive_cooldown(
+        self, event: AstrMessageEvent, lifecycle: PluginLifecycle
+    ) -> str | None:
+        if not bool(self._config.get("send_governor_enabled", False)):
+            return None
+        permit = lifecycle.governor.acquire(
+            SendRequest(
+                DeliveryClass.INTERACTIVE,
+                self._group_id(event),
+                self._sender_id(event),
+            )
+        )
+        if permit.allowed:
+            return None
+        return f"请求有点快，请 {max(1, round(permit.retry_after_seconds))} 秒后再试。"
+
     async def _dispatch_result(self, event: AstrMessageEvent) -> Any:
         return self._reply_result(event, await self._dispatch(event))
 
     async def _dispatch(self, event: AstrMessageEvent) -> Reply:
         lifecycle = await self._ensure_lifecycle()
-        if bool(self._config.get("send_governor_enabled", False)):
-            permit = lifecycle.governor.acquire(
-                SendRequest(
-                    DeliveryClass.INTERACTIVE,
-                    self._group_id(event),
-                    self._sender_id(event),
-                )
-            )
-            if not permit.allowed:
-                return Reply.from_text(
-                    f"请求有点快，请 {max(1, round(permit.retry_after_seconds))} 秒后再试。"
-                )
+        cooldown = self._interactive_cooldown(event, lifecycle)
+        if cooldown is not None:
+            return Reply.from_text(cooldown)
         adapter = self._build_adapter(lifecycle)
         reply = await adapter.handle_message(
             platform="qq",

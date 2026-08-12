@@ -155,6 +155,64 @@ class NapCatOneBotClient:
             await self._http.aclose()
 
 
+class NapCatGroupContentClient:
+    """Narrow OneBot client for @all quota and weekly essence actions."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        token: str,
+        http: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._token = token
+        self._owns_http = http is None
+        self._http = http or httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=3.0))
+
+    async def at_all_remaining(self, group_id: str) -> int | None:
+        data = await self._action("get_group_at_all_remain", {"group_id": group_id})
+        if not isinstance(data, dict) or data.get("can_at_all") is not True:
+            return None
+        remaining = data.get("remain_at_all_count_for_group")
+        return remaining if isinstance(remaining, int) and remaining >= 0 else None
+
+    async def set_essence(self, message_id: str) -> bool:
+        return await self._succeeded("set_essence_msg", {"message_id": message_id})
+
+    async def delete_essence(self, message_id: str) -> bool:
+        return await self._succeeded("delete_essence_msg", {"message_id": message_id})
+
+    async def _succeeded(self, action: str, payload: dict[str, object]) -> bool:
+        marker = object()
+        return await self._action(action, payload, failure=marker) is not marker
+
+    async def _action(
+        self,
+        action: str,
+        payload: dict[str, object],
+        *,
+        failure: object | None = None,
+    ) -> object | None:
+        try:
+            response = await self._http.post(
+                f"{self._base_url}/{action}",
+                headers={"Authorization": f"Bearer {self._token}"},
+                json=payload,
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.HTTPError, TypeError, ValueError):
+            return failure
+        if not isinstance(body, dict) or body.get("status") != "ok" or body.get("retcode") != 0:
+            return failure
+        return body.get("data")
+
+    async def close(self) -> None:
+        if self._owns_http:
+            await self._http.aclose()
+
+
 class StatusProbe(Protocol):
     async def probe(self) -> NapCatProbeResult: ...
 
@@ -235,6 +293,7 @@ class NapCatStatusMonitor:
 
 
 __all__ = [
+    "NapCatGroupContentClient",
     "NapCatOneBotClient",
     "NapCatProbeResult",
     "NapCatStatus",

@@ -137,6 +137,10 @@ def test_empty_database_base_to_head() -> None:
     assert _run(_has_table("admin_audit_events"))
     assert _run(_has_table("runtime_component_states"))
     assert _run(_has_table("runtime_component_events"))
+    assert _run(_has_table("content_publications"))
+    assert _run(_has_table("content_polls"))
+    assert _run(_has_table("content_poll_candidates"))
+    assert _run(_has_table("content_poll_votes"))
 
 
 def test_head_round_trip() -> None:
@@ -158,6 +162,10 @@ def test_head_round_trip() -> None:
     assert _run(_has_table("admin_audit_events"))
     assert _run(_has_table("runtime_component_states"))
     assert _run(_has_table("runtime_component_events"))
+    assert _run(_has_table("content_publications"))
+    assert _run(_has_table("content_polls"))
+    assert _run(_has_table("content_poll_candidates"))
+    assert _run(_has_table("content_poll_votes"))
 
 
 def test_0004_snapshot_forward() -> None:

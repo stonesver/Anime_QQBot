@@ -1,10 +1,12 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 
 from anime_qqbot.operations.napcat_status import (
+    NapCatGroupContentClient,
     NapCatOneBotClient,
     NapCatProbeResult,
     NapCatStatus,
@@ -130,6 +132,39 @@ async def test_onebot_probe_reports_qq_offline_when_endpoint_is_healthy() -> Non
         result = await client.probe()
 
     assert result == NapCatProbeResult.qq_offline()
+
+
+@pytest.mark.asyncio
+async def test_group_content_client_checks_at_all_quota_and_manages_essence() -> None:
+    requests: list[tuple[str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        if request.url.path == "/get_group_at_all_remain":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "ok",
+                    "retcode": 0,
+                    "data": {"can_at_all": True, "remain_at_all_count_for_group": 3},
+                },
+            )
+        return httpx.Response(200, json={"status": "ok", "retcode": 0, "data": None})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = NapCatGroupContentClient(
+            base_url="http://napcat:3000", token="secret-token", http=http
+        )
+        assert await client.at_all_remaining("42") == 3
+        assert await client.set_essence("1001")
+        assert await client.delete_essence("1000")
+
+    assert requests == [
+        ("/get_group_at_all_remain", {"group_id": "42"}),
+        ("/set_essence_msg", {"message_id": "1001"}),
+        ("/delete_essence_msg", {"message_id": "1000"}),
+    ]
 
 
 @pytest.mark.asyncio

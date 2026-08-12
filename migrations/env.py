@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from anime_qqbot.persistence.base import Base
 from anime_qqbot.persistence.models import (  # noqa: F401
     catalog,
+    content_operations,
     identity,
     notifications_v2,
     resources,

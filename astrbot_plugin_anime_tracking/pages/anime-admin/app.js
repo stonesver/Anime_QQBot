@@ -1,5 +1,5 @@
 const bridge = window.AstrBotPluginPage;
-const state = { view: "overview", groups: [], writesEnabled: true, overviewLoading: false };
+const state = { view: "overview", groups: [], pollCandidates: [], writesEnabled: true, overviewLoading: false };
 const $ = (selector) => document.querySelector(selector);
 const OVERVIEW_REFRESH_MS = 30_000;
 
@@ -155,6 +155,43 @@ async function loadSubscriptions() {
   } catch (reason) { error("#subscriptions-content", reason); }
 }
 
+function minuteToTime(value) {
+  const minute = Number(value || 0);
+  return `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
+}
+
+function timeToMinute(value) {
+  const [hour, minute] = String(value).split(":").map(Number);
+  return hour * 60 + minute;
+}
+
+async function loadContent() {
+  loading("#content-settings"); loading("#content-polls");
+  try {
+    const [groups, polls] = await Promise.all([
+      bridge.apiGet("groups", { page: 1, page_size: 50 }),
+      bridge.apiGet("content-polls"),
+    ]);
+    state.groups = groups.items;
+    $("#poll-group").innerHTML = groups.items.map((item) => `<option value="${escapeHtml(item.group_id)}">${escapeHtml(item.group_id)}</option>`).join("");
+    $("#content-settings").innerHTML = groups.items.length ? `<table><thead><tr><th>群</th><th>每日汇总</th><th>@全体</th><th>锚点 / 静默 / 截止</th><th>周报</th><th>周报时间</th><th>操作</th></tr></thead><tbody>${groups.items.map((item) => `<tr>
+      <td>${escapeHtml(item.group_id)}</td>
+      <td><input type="checkbox" data-field="daily_digest_enabled" data-content-group="${escapeHtml(item.group_id)}" ${item.daily_digest_enabled ? "checked" : ""}></td>
+      <td><input type="checkbox" data-field="daily_digest_at_all_enabled" data-content-group="${escapeHtml(item.group_id)}" ${item.daily_digest_at_all_enabled ? "checked" : ""}></td>
+      <td><input type="time" data-field="daily_digest_anchor_minute" data-content-group="${escapeHtml(item.group_id)}" value="${minuteToTime(item.daily_digest_anchor_minute)}"> / <input type="number" min="1" max="180" title="静默分钟" data-field="daily_digest_quiet_minutes" data-content-group="${escapeHtml(item.group_id)}" value="${escapeHtml(item.daily_digest_quiet_minutes)}"> 分 / <input type="time" data-field="daily_digest_cutoff_minute" data-content-group="${escapeHtml(item.group_id)}" value="${minuteToTime(item.daily_digest_cutoff_minute)}"></td>
+      <td><input type="checkbox" data-field="weekly_report_enabled" data-content-group="${escapeHtml(item.group_id)}" ${item.weekly_report_enabled ? "checked" : ""}></td>
+      <td><select data-field="weekly_report_weekday" data-content-group="${escapeHtml(item.group_id)}">${["周日", "周一", "周二", "周三", "周四", "周五", "周六"].map((label, value) => `<option value="${value}" ${item.weekly_report_weekday === value ? "selected" : ""}>${label}</option>`).join("")}</select> <input type="time" data-field="weekly_report_minute" data-content-group="${escapeHtml(item.group_id)}" value="${minuteToTime(item.weekly_report_minute)}"></td>
+      <td><button class="button small" data-content-save="${escapeHtml(item.group_id)}">保存</button></td>
+    </tr>`).join("")}</tbody></table>` : empty("还没有可配置的群。");
+    $("#content-polls").innerHTML = polls.length ? `<table><thead><tr><th>群</th><th>主题</th><th>状态</th><th>截止</th><th>候选与票数</th><th>操作</th></tr></thead><tbody>${polls.map((poll) => `<tr><td>${escapeHtml(poll.group_id)}</td><td>${escapeHtml(poll.theme_label)}</td><td>${status(poll.status)}</td><td>${formatTime(poll.closes_at)}</td><td>${poll.candidates.map((item) => `${escapeHtml(item.title)} ${item.votes}`).join(" · ")}</td><td>${poll.status === "open" ? `<button class="button small danger" data-close-poll="${poll.id}">结束</button>` : "—"}</td></tr>`).join("")}</tbody></table>` : empty("还没有投票记录。");
+  } catch (reason) { error("#content-settings", reason); error("#content-polls", reason); }
+}
+
+function renderPollCandidates(items) {
+  state.pollCandidates = items;
+  $("#poll-candidates").innerHTML = items.length ? items.map((item) => `<label class="candidate-choice"><input type="checkbox" data-poll-anime="${item.anime_id}" checked><span>${escapeHtml(item.title)}</span></label>`).join("") : empty("当前主题没有足够候选，可先补充订阅或放送数据。");
+}
+
 async function loadMappings() {
   loading("#mappings-content");
   try {
@@ -229,7 +266,7 @@ function mappingReason(reason) {
   return labels[reason] || reason;
 }
 
-const loaders = { overview: loadOverview, catalog: loadCatalog, groups: loadGroups, subscriptions: loadSubscriptions, mappings: loadMappings, notifications: loadNotifications, sources: loadSources };
+const loaders = { overview: loadOverview, catalog: loadCatalog, groups: loadGroups, content: loadContent, subscriptions: loadSubscriptions, mappings: loadMappings, notifications: loadNotifications, sources: loadSources };
 async function switchView(view) {
   state.view = view;
   document.querySelectorAll(".tab").forEach((node) => node.classList.toggle("active", node.dataset.view === view));
@@ -254,6 +291,35 @@ document.addEventListener("click", async (event) => {
       const field = target.dataset.toggle;
       await bridge.apiPost(`groups/${item.group_id}/update`, { expected_version: item.version, [field]: !item[field] });
       toast("群设置已保存"); return loadGroups();
+    }
+    if (target.dataset.action === "refresh-content") return loadContent();
+    if (target.dataset.contentSave) {
+      const groupId = target.dataset.contentSave;
+      const item = state.groups.find((row) => row.group_id === groupId);
+      const fields = [...document.querySelectorAll(`[data-content-group="${CSS.escape(groupId)}"]`)];
+      const payload = { expected_version: item.version };
+      fields.forEach((node) => {
+        if (node.type === "checkbox") payload[node.dataset.field] = node.checked;
+        else if (node.type === "time") payload[node.dataset.field] = timeToMinute(node.value);
+        else payload[node.dataset.field] = Number(node.value);
+      });
+      await bridge.apiPost(`groups/${groupId}/update`, payload);
+      toast("内容运营设置已保存"); return loadContent();
+    }
+    if (target.dataset.action === "suggest-poll") {
+      const items = await bridge.apiGet("content-candidates", { group_id: $("#poll-group").value, theme: $("#poll-theme").value });
+      renderPollCandidates(items); return;
+    }
+    if (target.dataset.action === "open-poll") {
+      const animeIds = [...document.querySelectorAll("[data-poll-anime]:checked")].map((node) => node.dataset.pollAnime);
+      if (animeIds.length < 3 || animeIds.length > 6) throw new Error("请选择 3–6 个候选");
+      await bridge.apiPost("content-polls/open", { group_id: $("#poll-group").value, theme: $("#poll-theme").value, duration_hours: Number($("#poll-duration").value), anime_ids: animeIds });
+      toast("投票已进入发送队列"); renderPollCandidates([]); return loadContent();
+    }
+    if (target.dataset.closePoll) {
+      if (!await confirmAction("结束投票", "将立即结算并向群内发送结果。")) return;
+      await bridge.apiPost(`content-polls/${target.dataset.closePoll}/close`, {});
+      toast("投票已结算"); return loadContent();
     }
     if (target.dataset.cancelSub) {
       if (!await confirmAction("取消这条订阅", "只取消当前用户、当前群的这一条番剧订阅。")) return;

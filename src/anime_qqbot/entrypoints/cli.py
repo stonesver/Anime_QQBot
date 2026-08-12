@@ -52,6 +52,7 @@ from anime_qqbot.catalog.projection import project_anime
 from anime_qqbot.catalog.repository_v2 import CatalogWriteRepository
 from anime_qqbot.catalog.sync_anilist import AniListSyncService
 from anime_qqbot.clock import SystemClock
+from anime_qqbot.content_operations.planner import ContentOperationsPlanner
 from anime_qqbot.entrypoints.health import create_health_app
 from anime_qqbot.interactions.repository import InteractionSessionRepository
 from anime_qqbot.logging import configure_logging
@@ -116,6 +117,7 @@ class WorkerComponents:
     anilist_sync: AniListSyncService
     anilist_discovery: AniListLinkDiscoveryService
     planner: AiringPlanner
+    content_planner: ContentOperationsPlanner
     mikan_pipeline: MikanReleasePipeline
     poster_cache: PosterCache
     poster_warmup: PosterWarmupService
@@ -167,6 +169,7 @@ async def _build_components(settings: Settings) -> WorkerComponents:
     follows = FollowRepository(sessions)
     outbox = OutboxRepository(sessions)
     planner = AiringPlanner(follow_repo=follows, outbox=outbox)
+    content_planner = ContentOperationsPlanner(sessions)
     mikan_client = MikanClient(user_agent=settings.bangumi_user_agent)
     mikan_pipeline = MikanReleasePipeline(
         sessions=sessions,
@@ -194,6 +197,7 @@ async def _build_components(settings: Settings) -> WorkerComponents:
         anilist_sync=anilist_sync,
         anilist_discovery=anilist_discovery,
         planner=planner,
+        content_planner=content_planner,
         mikan_pipeline=mikan_pipeline,
         poster_cache=poster_cache,
         poster_warmup=poster_warmup,
@@ -955,6 +959,10 @@ async def run_worker() -> None:
                 await _plan_airing_reminders(components, now)
             except Exception as exc:
                 logger.exception("worker.airing", extra={"error": str(exc)})
+            try:
+                await components.content_planner.plan_due(now)
+            except Exception as exc:
+                logger.exception("worker.content_operations", extra={"error": str(exc)})
             try:
                 await _cleanup_processed_events(
                     components.sessions,

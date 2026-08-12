@@ -56,16 +56,29 @@ async def test_group_policy_defaults_and_optimistic_update(session_factory) -> N
     assert initial.mention_enabled is True
     assert initial.direct_shortcuts_enabled is False
     assert initial.active_notifications_enabled is True
+    assert initial.weekly_report_enabled is False
+    assert initial.daily_digest_enabled is False
+    assert initial.daily_digest_at_all_enabled is False
 
     changed = await repo.update_policy(
         group.id,
         expected_version=initial.version,
         now=now,
         direct_shortcuts_enabled=True,
+        weekly_report_enabled=True,
+        weekly_report_weekday=0,
+        weekly_report_minute=20 * 60,
+        daily_digest_enabled=True,
+        daily_digest_at_all_enabled=True,
         quiet_start_minute=23 * 60,
         quiet_end_minute=7 * 60,
     )
     assert changed.direct_shortcuts_enabled is True
+    assert changed.weekly_report_enabled is True
+    assert changed.weekly_report_weekday == 0
+    assert changed.weekly_report_minute == 20 * 60
+    assert changed.daily_digest_enabled is True
+    assert changed.daily_digest_at_all_enabled is True
     assert changed.is_quiet_at(datetime(2026, 7, 29, 16, 30, tzinfo=UTC))
 
     with pytest.raises(PolicyVersionConflictError):

@@ -100,6 +100,7 @@ async def _seed_job(
     *,
     job_type: str = "airing",
     chat_group_id: UUID = SAMPLE_CHAT_GROUP_ID,
+    payload: dict[str, object] | None = None,
 ) -> UUID:
     from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 
@@ -113,7 +114,8 @@ async def _seed_job(
                     chat_group_id=chat_group_id,
                     job_type=job_type,
                     business_key=f"test-{job_id}",
-                    payload={
+                    payload=payload
+                    or {
                         "display_title": "test",
                         "episode_label": "01",
                         "at_user_ids": ["user-1"],
@@ -176,6 +178,24 @@ async def test_dispatcher_marks_failed_when_send_raises(_clean: None) -> None:
     d = OutboxDispatcher(lifecycle=lc)
     await d._tick()  # type: ignore[reportPrivateUsage]
     assert await _read_status(job_id, lc.sessions) == "pending"
+    await d.stop()
+    await lc.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_marks_unclassified_send_failure_unknown(_clean: None) -> None:
+    await _seed_chat_group(umo="umo-unknown")
+    job_id = await _seed_job()
+
+    class RaisingCtx(FakeContext):
+        async def send_message(self, umo: str, chain: object) -> None:
+            raise RuntimeError("unexpected adapter response")
+
+    lc = PluginLifecycle(context=RaisingCtx(), start_dispatcher=False)
+    await lc.start()
+    d = OutboxDispatcher(lifecycle=lc)
+    await d._tick()  # type: ignore[reportPrivateUsage]
+    assert await _read_status(job_id, lc.sessions) == "unknown"
     await d.stop()
     await lc.shutdown()
 
@@ -267,4 +287,109 @@ async def test_lifecycle_starts_live_dispatcher_and_records_heartbeat(_clean: No
 
     assert heartbeat is not None
     assert heartbeat.worker_kind == "consumer"
+    await lc.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_daily_at_all_is_not_sent_when_quota_is_unavailable(_clean: None) -> None:
+    await _seed_chat_group(umo="umo-daily")
+    job_id = await _seed_job(
+        job_type="daily_release_digest",
+        payload={"period_date": "2026-08-11", "at_all": True, "items": []},
+    )
+
+    class NoQuota:
+        async def at_all_remaining(self, _group_id: str) -> int | None:
+            return 0
+
+    ctx = FakeContext()
+    lc = PluginLifecycle(context=ctx, start_dispatcher=False)
+    await lc.start()
+    lc.napcat_content = NoQuota()  # type: ignore[assignment]
+    d = OutboxDispatcher(lifecycle=lc)
+    await d._tick()  # type: ignore[reportPrivateUsage]
+
+    assert ctx.sent == []
+    assert await _read_status(job_id, lc.sessions) == "failed"
+    lc.napcat_content = None
+    await lc.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_weekly_report_sets_new_essence_before_removing_old(_clean: None) -> None:
+    from anime_qqbot.persistence.models.content_operations import ContentPublication
+
+    await _seed_chat_group(umo="umo-weekly")
+    job_id = await _seed_job(
+        job_type="weekly_report",
+        payload={"week_start": "2026-08-09", "timezone": "Asia/Shanghai"},
+    )
+    old_publication_id = uuid4()
+    engine = create_async_engine(DB)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as s, s.begin():
+            s.add_all(
+                [
+                    ContentPublication(
+                        id=old_publication_id,
+                        chat_group_id=SAMPLE_CHAT_GROUP_ID,
+                        publication_type="weekly_report",
+                        period_key="2026-08-02",
+                        notification_job_id=None,
+                        platform_message_id="old-message",
+                        status="sent",
+                        essence_status="set",
+                        published_at=datetime.now(UTC) - timedelta(days=7),
+                        created_at=datetime.now(UTC) - timedelta(days=7),
+                        updated_at=datetime.now(UTC) - timedelta(days=7),
+                    ),
+                    ContentPublication(
+                        id=uuid4(),
+                        chat_group_id=SAMPLE_CHAT_GROUP_ID,
+                        publication_type="weekly_report",
+                        period_key="2026-08-09",
+                        notification_job_id=job_id,
+                        platform_message_id=None,
+                        status="planned",
+                        essence_status="none",
+                        published_at=None,
+                        created_at=datetime.now(UTC),
+                        updated_at=datetime.now(UTC),
+                    ),
+                ]
+            )
+    finally:
+        await engine.dispose()
+
+    class ReturningContext(FakeContext):
+        async def send_message(self, umo: str, chain: object) -> dict[str, str]:
+            self.sent.append((umo, chain))
+            return {"message_id": "new-message"}
+
+    class EssenceClient:
+        def __init__(self) -> None:
+            self.actions: list[tuple[str, str]] = []
+
+        async def set_essence(self, message_id: str) -> bool:
+            self.actions.append(("set", message_id))
+            return True
+
+        async def delete_essence(self, message_id: str) -> bool:
+            self.actions.append(("delete", message_id))
+            return True
+
+    ctx = ReturningContext()
+    essence = EssenceClient()
+    lc = PluginLifecycle(context=ctx, start_dispatcher=False)
+    await lc.start()
+    lc.napcat_content = essence  # type: ignore[assignment]
+    d = OutboxDispatcher(lifecycle=lc)
+    await d._tick()  # type: ignore[reportPrivateUsage]
+
+    assert essence.actions == [("set", "new-message"), ("delete", "old-message")]
+    async with lc.sessions() as session:
+        old = await session.get(ContentPublication, old_publication_id)
+        assert old is not None
+        assert old.essence_status == "removed"
+    lc.napcat_content = None
     await lc.shutdown()

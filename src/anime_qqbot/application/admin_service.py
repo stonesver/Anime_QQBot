@@ -2,20 +2,23 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from uuid import UUID
+from datetime import UTC, date, datetime, time, timedelta
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.catalog.anilist_mapping_policy import AniListMappingPolicyRepository
+from anime_qqbot.content_operations.polls import POLL_THEMES, PollService, format_poll
+from anime_qqbot.content_operations.publications import ContentPublicationRepository
 from anime_qqbot.groups.repository_v2 import ChatGroupRepository
 from anime_qqbot.groups.settings import (
     GroupRuntimePolicy,
     GroupRuntimeSettingsRepository,
 )
 from anime_qqbot.notifications.control import DeliveryControlRepository
+from anime_qqbot.notifications.outbox import OutboxRepository
 from anime_qqbot.operations.repository import (
     AdminAuditRepository,
     OperatorJobRepository,
@@ -32,9 +35,11 @@ from anime_qqbot.persistence.models.catalog import (
     SourceSnapshot,
     SourceSyncState,
 )
+from anime_qqbot.persistence.models.content_operations import ContentPoll
 from anime_qqbot.persistence.models.identity import ChatGroup
 from anime_qqbot.persistence.models.interaction import GroupRuntimeSetting
 from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
+from anime_qqbot.persistence.models.resources import ResourceRelease
 from anime_qqbot.persistence.models.subscriptions_v2 import FollowSubscription
 
 
@@ -57,6 +62,9 @@ class AdminService:
         self._audit = AdminAuditRepository(sessions)
         self._runtime_status = RuntimeComponentStatusRepository(sessions)
         self._anilist_mapping_policy = AniListMappingPolicyRepository(sessions)
+        self._polls = PollService(sessions)
+        self._outbox = OutboxRepository(sessions)
+        self._publications = ContentPublicationRepository(sessions)
 
     async def overview(self) -> dict[str, object]:
         now = datetime.now(UTC)
@@ -393,6 +401,22 @@ class AdminService:
                     "active_notifications_enabled": (
                         setting.active_notifications_enabled if setting else True
                     ),
+                    "weekly_report_enabled": setting.weekly_report_enabled if setting else False,
+                    "weekly_report_weekday": setting.weekly_report_weekday if setting else 0,
+                    "weekly_report_minute": setting.weekly_report_minute if setting else 1200,
+                    "daily_digest_enabled": setting.daily_digest_enabled if setting else False,
+                    "daily_digest_at_all_enabled": (
+                        setting.daily_digest_at_all_enabled if setting else False
+                    ),
+                    "daily_digest_anchor_minute": (
+                        setting.daily_digest_anchor_minute if setting else 1350
+                    ),
+                    "daily_digest_quiet_minutes": (
+                        setting.daily_digest_quiet_minutes if setting else 20
+                    ),
+                    "daily_digest_cutoff_minute": (
+                        setting.daily_digest_cutoff_minute if setting else 1410
+                    ),
                     "quiet_start_minute": (setting.quiet_start_minute if setting else None),
                     "quiet_end_minute": setting.quiet_end_minute if setting else None,
                     "paused": setting.paused if setting else False,
@@ -676,6 +700,14 @@ class AdminService:
             "mention_enabled",
             "direct_shortcuts_enabled",
             "active_notifications_enabled",
+            "weekly_report_enabled",
+            "weekly_report_weekday",
+            "weekly_report_minute",
+            "daily_digest_enabled",
+            "daily_digest_at_all_enabled",
+            "daily_digest_anchor_minute",
+            "daily_digest_quiet_minutes",
+            "daily_digest_cutoff_minute",
             "quiet_start_minute",
             "quiet_end_minute",
             "clear_quiet_hours",
@@ -687,6 +719,9 @@ class AdminService:
             "mention_enabled",
             "direct_shortcuts_enabled",
             "active_notifications_enabled",
+            "weekly_report_enabled",
+            "daily_digest_enabled",
+            "daily_digest_at_all_enabled",
             "clear_quiet_hours",
         )
         for field in boolean_fields:
@@ -698,7 +733,29 @@ class AdminService:
                 not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 1439
             ):
                 raise AdminValidationError(f"{field} must be between 0 and 1439")
-        before = await self._groups.get_policy(group.id)
+        integer_limits = {
+            "weekly_report_weekday": (0, 6),
+            "weekly_report_minute": (0, 1439),
+            "daily_digest_anchor_minute": (0, 1438),
+            "daily_digest_quiet_minutes": (1, 180),
+            "daily_digest_cutoff_minute": (1, 1439),
+        }
+        for field, (low, high) in integer_limits.items():
+            value = changes.get(field)
+            if field in changes and (
+                not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high
+            ):
+                raise AdminValidationError(f"{field} must be between {low} and {high}")
+        current_policy = await self._groups.get_policy(group.id)
+        anchor = _optional_int(changes, "daily_digest_anchor_minute")
+        quiet = _optional_int(changes, "daily_digest_quiet_minutes")
+        cutoff = _optional_int(changes, "daily_digest_cutoff_minute")
+        anchor = current_policy.daily_digest_anchor_minute if anchor is None else anchor
+        quiet = current_policy.daily_digest_quiet_minutes if quiet is None else quiet
+        cutoff = current_policy.daily_digest_cutoff_minute if cutoff is None else cutoff
+        if anchor >= cutoff or quiet > cutoff - anchor:
+            raise AdminValidationError("daily digest quiet window must fit before cutoff")
+        before = current_policy
         changed = await self._groups.update_policy(
             group.id,
             expected_version=expected_version,
@@ -706,6 +763,14 @@ class AdminService:
             mention_enabled=_optional_bool(changes, "mention_enabled"),
             direct_shortcuts_enabled=_optional_bool(changes, "direct_shortcuts_enabled"),
             active_notifications_enabled=_optional_bool(changes, "active_notifications_enabled"),
+            weekly_report_enabled=_optional_bool(changes, "weekly_report_enabled"),
+            weekly_report_weekday=_optional_int(changes, "weekly_report_weekday"),
+            weekly_report_minute=_optional_int(changes, "weekly_report_minute"),
+            daily_digest_enabled=_optional_bool(changes, "daily_digest_enabled"),
+            daily_digest_at_all_enabled=_optional_bool(changes, "daily_digest_at_all_enabled"),
+            daily_digest_anchor_minute=_optional_int(changes, "daily_digest_anchor_minute"),
+            daily_digest_quiet_minutes=_optional_int(changes, "daily_digest_quiet_minutes"),
+            daily_digest_cutoff_minute=_optional_int(changes, "daily_digest_cutoff_minute"),
             quiet_start_minute=_optional_int(changes, "quiet_start_minute"),
             quiet_end_minute=_optional_int(changes, "quiet_end_minute"),
             clear_quiet_hours=bool(changes.get("clear_quiet_hours", False)),
@@ -722,6 +787,220 @@ class AdminService:
             now=datetime.now(UTC),
         )
         return _policy_summary(changed)
+
+    async def content_polls(self) -> list[dict[str, object]]:
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(ContentPoll.id).order_by(ContentPoll.created_at.desc()).limit(30)
+                )
+            ).scalars()
+        views = [view for poll_id in rows if (view := await self._polls.get(poll_id))]
+        return [
+            {
+                "id": str(view.id),
+                "group_id": view.external_group_id,
+                "theme": view.theme,
+                "theme_label": view.theme_label,
+                "status": view.status,
+                "closes_at": view.closes_at.isoformat(),
+                "candidates": [
+                    {
+                        "anime_id": str(candidate.anime_id),
+                        "position": candidate.position,
+                        "title": candidate.title,
+                        "votes": candidate.votes,
+                    }
+                    for candidate in view.candidates
+                ],
+            }
+            for view in views
+        ]
+
+    async def suggest_poll_candidates(
+        self, *, external_group_id: str, theme: str
+    ) -> list[dict[str, object]]:
+        if theme not in POLL_THEMES:
+            raise AdminValidationError("unsupported poll theme")
+        group = await ChatGroupRepository(self._sessions).find_by_external("qq", external_group_id)
+        if group is None:
+            raise AdminNotFoundError("group not found")
+        now = datetime.now(UTC)
+        async with self._sessions() as session:
+            if theme == "weekly_best":
+                ranked = (
+                    await session.execute(
+                        select(Anime, func.count(ResourceRelease.id).label("score"))
+                        .join(ResourceRelease, ResourceRelease.anime_id == Anime.id)
+                        .join(
+                            FollowSubscription,
+                            FollowSubscription.anime_id == Anime.id,
+                        )
+                        .where(
+                            FollowSubscription.chat_group_id == group.id,
+                            FollowSubscription.notify_resource.is_(True),
+                            ResourceRelease.pub_date >= now - timedelta(days=7),
+                            Anime.disabled.is_(False),
+                            Anime.nsfw_flag != "true",
+                        )
+                        .group_by(Anime.id)
+                        .order_by(func.count(ResourceRelease.id).desc(), Anime.display_title)
+                        .limit(6)
+                    )
+                ).all()
+            elif theme == "group_watch":
+                ranked = (
+                    await session.execute(
+                        select(Anime, func.count(FollowSubscription.id).label("score"))
+                        .join(FollowSubscription, FollowSubscription.anime_id == Anime.id)
+                        .where(
+                            FollowSubscription.chat_group_id == group.id,
+                            Anime.disabled.is_(False),
+                            Anime.nsfw_flag != "true",
+                        )
+                        .group_by(Anime.id)
+                        .order_by(func.count(FollowSubscription.id).desc(), Anime.display_title)
+                        .limit(6)
+                    )
+                ).all()
+            else:
+                timezone = ZoneInfo((await self._groups.get_policy(group.id)).timezone)
+                local_today = now.astimezone(timezone).date()
+                if theme == "next_week_anticipated":
+                    this_sunday = local_today - timedelta(days=(local_today.weekday() + 1) % 7)
+                    local_start = this_sunday + timedelta(days=7)
+                    local_end = local_start + timedelta(days=7)
+                else:
+                    quarter_start_month = ((local_today.month - 1) // 3) * 3 + 1
+                    local_start = date(local_today.year, quarter_start_month, 1)
+                    if quarter_start_month == 10:
+                        local_end = date(local_today.year + 1, 1, 1)
+                    else:
+                        local_end = date(local_today.year, quarter_start_month + 3, 1)
+                start = datetime.combine(local_start, time.min, tzinfo=timezone).astimezone(UTC)
+                end = datetime.combine(local_end, time.min, tzinfo=timezone).astimezone(UTC)
+                ranked = (
+                    await session.execute(
+                        select(Anime, func.count(AiringOccurrenceRow.id).label("score"))
+                        .join(AiringOccurrenceRow, AiringOccurrenceRow.anime_id == Anime.id)
+                        .where(
+                            AiringOccurrenceRow.air_at >= start,
+                            AiringOccurrenceRow.air_at < end,
+                            Anime.disabled.is_(False),
+                            Anime.nsfw_flag != "true",
+                        )
+                        .group_by(Anime.id)
+                        .order_by(func.count(AiringOccurrenceRow.id).desc(), Anime.display_title)
+                        .limit(6)
+                    )
+                ).all()
+        return [
+            {"anime_id": str(anime.id), "title": anime.display_title or "未命名番剧"}
+            for anime, _score in ranked
+        ]
+
+    async def open_content_poll(
+        self,
+        *,
+        actor: str,
+        external_group_id: object,
+        theme: object,
+        anime_ids: object,
+        duration_hours: object,
+    ) -> dict[str, object]:
+        if not isinstance(external_group_id, str) or not external_group_id:
+            raise AdminValidationError("group_id is required")
+        if not isinstance(theme, str) or theme not in POLL_THEMES:
+            raise AdminValidationError("unsupported poll theme")
+        group = await ChatGroupRepository(self._sessions).find_by_external("qq", external_group_id)
+        if group is None:
+            raise AdminNotFoundError("group not found")
+        if not isinstance(anime_ids, list) or not all(
+            isinstance(value, str) for value in anime_ids
+        ):
+            raise AdminValidationError("anime_ids must be a list")
+        if (
+            not isinstance(duration_hours, int)
+            or isinstance(duration_hours, bool)
+            or not 1 <= duration_hours <= 168
+        ):
+            raise AdminValidationError("duration_hours must be between 1 and 168")
+        now = datetime.now(UTC)
+        view = await self._polls.open_poll(
+            chat_group_id=group.id,
+            theme=theme,
+            anime_ids=tuple(_uuid(value) for value in anime_ids),
+            period_key=f"{theme}/{now:%Y%m%d}/{uuid4()}",
+            actor=actor,
+            opens_at=now,
+            closes_at=now + timedelta(hours=duration_hours),
+        )
+        job = await self._outbox.enqueue(
+            chat_group_id=group.id,
+            job_type="poll_open",
+            business_key=f"content/poll-open/{view.id}",
+            payload={"text": format_poll(view)},
+            available_at=now,
+            expires_at=view.closes_at,
+        )
+        await self._publications.record_planned(
+            chat_group_id=group.id,
+            publication_type="poll_open",
+            period_key=str(view.id),
+            notification_job_id=job.id,
+            now=now,
+        )
+        await self._audit.append(
+            actor=actor,
+            action="content_poll.open",
+            target_type="content_poll",
+            target_id=str(view.id),
+            before_summary={},
+            after_summary={"group_id": external_group_id, "theme": theme},
+            result="success",
+            error_summary=None,
+            now=now,
+        )
+        return {"id": str(view.id), "text": format_poll(view)}
+
+    async def close_content_poll(self, poll_id: str, *, actor: str) -> dict[str, object]:
+        now = datetime.now(UTC)
+        view = await self._polls.close_poll(_uuid(poll_id), now=now)
+        group = await ChatGroupRepository(self._sessions).find_by_external(
+            "qq", view.external_group_id
+        )
+        if group is None:
+            raise AdminNotFoundError("group not found")
+        result_text = format_poll(view).replace(
+            "发送「/番剧 投票 编号」参与，重复投票会改票。", "投票已结束。"
+        )
+        job = await self._outbox.enqueue(
+            chat_group_id=group.id,
+            job_type="poll_result",
+            business_key=f"content/poll-result/{view.id}",
+            payload={"text": result_text},
+            available_at=now,
+            expires_at=now + timedelta(hours=24),
+        )
+        await self._publications.record_planned(
+            chat_group_id=group.id,
+            publication_type="poll_result",
+            period_key=str(view.id),
+            notification_job_id=job.id,
+            now=now,
+        )
+        await self._audit.append(
+            actor=actor,
+            action="content_poll.close",
+            target_type="content_poll",
+            target_id=str(view.id),
+            before_summary={"status": "open"},
+            after_summary={"status": "closed"},
+            result="success",
+            error_summary=None,
+            now=now,
+        )
+        return {"id": str(view.id), "text": result_text}
 
     async def set_global_delivery(
         self, *, paused: bool, actor: str, reason: str = ""
@@ -922,6 +1201,14 @@ def _policy_summary(policy: GroupRuntimePolicy) -> dict[str, object]:
         "mention_enabled": policy.mention_enabled,
         "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
         "active_notifications_enabled": policy.active_notifications_enabled,
+        "weekly_report_enabled": policy.weekly_report_enabled,
+        "weekly_report_weekday": policy.weekly_report_weekday,
+        "weekly_report_minute": policy.weekly_report_minute,
+        "daily_digest_enabled": policy.daily_digest_enabled,
+        "daily_digest_at_all_enabled": policy.daily_digest_at_all_enabled,
+        "daily_digest_anchor_minute": policy.daily_digest_anchor_minute,
+        "daily_digest_quiet_minutes": policy.daily_digest_quiet_minutes,
+        "daily_digest_cutoff_minute": policy.daily_digest_cutoff_minute,
         "quiet_start_minute": policy.quiet_start_minute,
         "quiet_end_minute": policy.quiet_end_minute,
         "paused": policy.paused,

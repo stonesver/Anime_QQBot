@@ -14,11 +14,12 @@ class DeliveryClass(StrEnum):
     INTERACTIVE = "interactive"
     AIRING = "airing"
     RELEASE = "release"
+    CONTENT = "content"
     ADMIN = "admin"
 
     @property
     def proactive(self) -> bool:
-        return self in {DeliveryClass.AIRING, DeliveryClass.RELEASE}
+        return self in {DeliveryClass.AIRING, DeliveryClass.RELEASE, DeliveryClass.CONTENT}
 
 
 @dataclass(frozen=True)

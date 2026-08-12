@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.adapter import Reply
 from astrbot_plugin_anime_tracking.anime_tracking_plugin.rendering import (
     render_airing_notification,
+    render_daily_release_digest,
     render_release_batch,
     render_reply,
     reply_to_event_result,
@@ -76,6 +77,26 @@ def test_notification_renderer_returns_message_chain(renderer, payload) -> None:
 
     assert hasattr(rendered, "chain")
     assert [item["type"] for item in rendered.chain] == ["at", "plain"]
+
+
+def test_daily_digest_mentions_all_once_and_lists_actual_releases() -> None:
+    rendered = render_daily_release_digest(
+        {
+            "period_date": "2026-08-11",
+            "at_all": True,
+            "items": [
+                {
+                    "title": "测试番剧",
+                    "episode_label": "07",
+                    "release_count": 2,
+                }
+            ],
+        }
+    )
+
+    assert [item["type"] for item in rendered.chain] == ["at", "plain"]
+    assert rendered.chain[0]["qq"] == "all"
+    assert "测试番剧 · 第 7 集（2 个资源）" in rendered.chain[1]["text"]
 
 
 def test_structured_release_notification_is_compact_and_uses_shanghai_time() -> None:

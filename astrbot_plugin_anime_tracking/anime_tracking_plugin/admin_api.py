@@ -53,6 +53,10 @@ class AdminWebAPI:
             ("mapping-policy", self.mapping_policy, ["GET"]),
             ("jobs", self.jobs, ["GET"]),
             ("controls", self.controls, ["GET"]),
+            ("content-polls", self.content_polls, ["GET"]),
+            ("content-candidates", self.content_candidates, ["GET"]),
+            ("content-polls/open", self.open_content_poll, ["POST"]),
+            ("content-polls/<poll_id>/close", self.close_content_poll, ["POST"]),
             ("groups/<group_id>/update", self.update_group, ["POST"]),
             ("delivery/global", self.global_delivery, ["POST"]),
             ("jobs/enqueue", self.enqueue_job, ["POST"]),
@@ -139,6 +143,29 @@ class AdminWebAPI:
 
     async def controls(self) -> object:
         return await self._read("controls")
+
+    async def content_polls(self) -> object:
+        return await self._read("content_polls")
+
+    async def content_candidates(self) -> object:
+        return await self._read(
+            "suggest_poll_candidates",
+            external_group_id=self._query("group_id", ""),
+            theme=self._query("theme", "weekly_best"),
+        )
+
+    async def open_content_poll(self) -> object:
+        payload = await self._json()
+        return await self._write(
+            "open_content_poll",
+            external_group_id=payload.get("group_id"),
+            theme=payload.get("theme"),
+            anime_ids=payload.get("anime_ids"),
+            duration_hours=payload.get("duration_hours"),
+        )
+
+    async def close_content_poll(self, poll_id: str) -> object:
+        return await self._write("close_content_poll", poll_id)
 
     async def update_group(self, group_id: str) -> object:
         payload = await self._json()

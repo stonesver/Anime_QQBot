@@ -37,6 +37,26 @@ class GroupRuntimeSetting(Base):
             "quiet_end_minute IS NULL OR quiet_end_minute BETWEEN 0 AND 1439",
             name="ck_group_runtime_settings_quiet_end",
         ),
+        CheckConstraint(
+            "weekly_report_weekday BETWEEN 0 AND 6",
+            name="ck_group_runtime_settings_weekly_weekday",
+        ),
+        CheckConstraint(
+            "weekly_report_minute BETWEEN 0 AND 1439",
+            name="ck_group_runtime_settings_weekly_minute",
+        ),
+        CheckConstraint(
+            "daily_digest_anchor_minute >= 0 AND "
+            "daily_digest_anchor_minute < daily_digest_cutoff_minute AND "
+            "daily_digest_cutoff_minute <= 1439",
+            name="ck_group_runtime_settings_digest_window",
+        ),
+        CheckConstraint(
+            "daily_digest_quiet_minutes >= 1 AND "
+            "daily_digest_quiet_minutes <= "
+            "daily_digest_cutoff_minute - daily_digest_anchor_minute",
+            name="ck_group_runtime_settings_digest_quiet",
+        ),
         CheckConstraint("version > 0", name="ck_group_runtime_settings_version"),
     )
 
@@ -50,6 +70,16 @@ class GroupRuntimeSetting(Base):
     active_notifications_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True
     )
+    weekly_report_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    weekly_report_weekday: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    weekly_report_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=1200)
+    daily_digest_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    daily_digest_at_all_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    daily_digest_anchor_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=1350)
+    daily_digest_quiet_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    daily_digest_cutoff_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=1410)
     quiet_start_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     quiet_end_minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
     group_interval_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)

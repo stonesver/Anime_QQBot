@@ -24,19 +24,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from anime_qqbot.application import (
+    ChatContext,
     claim_pending_job,
     complete_job,
     release_expired_leases,
+    week_listing,
 )
+from anime_qqbot.content_operations.publications import ContentPublicationRepository
 from anime_qqbot.groups.settings import GroupRuntimeSettingsRepository
 from anime_qqbot.notifications.control import DeliveryControlRepository
 from anime_qqbot.notifications.governor import DeliveryClass, SendRequest
@@ -44,12 +50,16 @@ from anime_qqbot.notifications.outcomes import DeliveryOutcomeKind
 from anime_qqbot.persistence.models.identity import ChatGroup
 from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 from anime_qqbot.persistence.models.runtime import WorkerHeartbeat
+from anime_qqbot.presentation.text import format_listing
 
+from .adapter import Reply
 from .delivery_adapter import classify_delivery_exception
 from .lifecycle import PluginLifecycle
 from .rendering import (
     render_airing_notification,
+    render_daily_release_digest,
     render_release_batch,
+    reply_to_message_chain,
 )
 
 logger = logging.getLogger(__name__)
@@ -153,6 +163,7 @@ class OutboxDispatcher:
                             NotificationJob.expires_at > now,
                         )
                         .order_by(
+                            self._priority_order(),
                             NotificationJob.available_at,
                             NotificationJob.created_at,
                         )
@@ -170,7 +181,11 @@ class OutboxDispatcher:
                         NotificationJob.available_at <= now,
                         NotificationJob.expires_at > now,
                     )
-                    .order_by(NotificationJob.available_at, NotificationJob.created_at)
+                    .order_by(
+                        self._priority_order(),
+                        NotificationJob.available_at,
+                        NotificationJob.created_at,
+                    )
                     .limit(50)
                 )
             ).all()
@@ -182,14 +197,26 @@ class OutboxDispatcher:
             policy = await policies.get_policy(group.id)
             if not policy.proactive_enabled or policy.is_quiet_at(now):
                 continue
-            delivery_class = (
-                DeliveryClass.RELEASE if job.job_type == "release" else DeliveryClass.AIRING
-            )
+            if job.job_type == "release":
+                delivery_class = DeliveryClass.RELEASE
+            elif job.job_type == "airing":
+                delivery_class = DeliveryClass.AIRING
+            else:
+                delivery_class = DeliveryClass.CONTENT
             if self._lifecycle.governor.acquire(
                 SendRequest(delivery_class, group.external_group_id)
             ).allowed:
                 return UUID(str(job.id))
         return None
+
+    @staticmethod
+    def _priority_order() -> Any:
+        return case(
+            (NotificationJob.job_type == "airing", 1),
+            (NotificationJob.job_type == "release", 2),
+            (NotificationJob.job_type == "daily_release_digest", 3),
+            else_=4,
+        )
 
     async def _deliver(
         self,
@@ -219,9 +246,36 @@ class OutboxDispatcher:
             )
             return
 
-        message_chain = self._render(job_type, payload)
+        publications = ContentPublicationRepository(sessions)
+        if job_type == "daily_release_digest" and payload.get("at_all") is True:
+            quota = self._lifecycle.napcat_content
+            remaining = (
+                await quota.at_all_remaining(chat_group.external_group_id)
+                if quota is not None
+                else None
+            )
+            if remaining is None or remaining <= 0:
+                await complete_job(
+                    sessions,
+                    job_id=job_id,
+                    result="failed",
+                    summary="@all quota unavailable",
+                )
+                await publications.complete_job(
+                    notification_job_id=job_id,
+                    status="failed",
+                    now=now,
+                )
+                return
+
+        message_chain = await self._render(
+            job_type,
+            payload,
+            chat_group=chat_group,
+            now=now,
+        )
         try:
-            await self._send_message(umo, message_chain)
+            message_id = await self._send_message(umo, message_chain)
         except Exception as exc:
             outcome = classify_delivery_exception(exc)
             controls = DeliveryControlRepository(sessions)
@@ -244,9 +298,21 @@ class OutboxDispatcher:
             await complete_job(
                 sessions,
                 job_id=job_id,
-                result="retry" if outcome.retryable else "failed",
+                result=(
+                    "retry"
+                    if outcome.retryable
+                    else "unknown"
+                    if outcome.kind == DeliveryOutcomeKind.UNKNOWN
+                    else "failed"
+                ),
                 summary=outcome.summary,
             )
+            if not outcome.retryable:
+                await publications.complete_job(
+                    notification_job_id=job_id,
+                    status=("unknown" if outcome.kind == DeliveryOutcomeKind.UNKNOWN else "failed"),
+                    now=now,
+                )
             return
 
         await complete_job(
@@ -255,8 +321,29 @@ class OutboxDispatcher:
             result="sent",
             summary="delivered",
         )
+        await publications.complete_job(
+            notification_job_id=job_id,
+            status="sent",
+            now=now,
+            platform_message_id=message_id,
+        )
+        if job_type == "weekly_report":
+            await self._replace_weekly_essence(
+                publications=publications,
+                chat_group_id=chat_group.id,
+                job_id=job_id,
+                message_id=message_id,
+                now=now,
+            )
 
-    def _render(self, job_type: str, payload: dict[str, Any]) -> Any:
+    async def _render(
+        self,
+        job_type: str,
+        payload: dict[str, Any],
+        *,
+        chat_group: ChatGroup,
+        now: datetime,
+    ) -> Any:
         """Build the AstrBot MessageChain for a job."""
         if job_type == "airing":
             return render_airing_notification(payload)
@@ -280,9 +367,38 @@ class OutboxDispatcher:
                 ),
                 proactive_action_link_sources=sources,
             )
+        if job_type == "daily_release_digest":
+            return render_daily_release_digest(payload)
+        if job_type == "weekly_report":
+            sessions = self._lifecycle.sessions
+            timezone = ZoneInfo(str(payload.get("timezone") or chat_group.timezone))
+            if sessions is None:
+                raise RuntimeError("missing sessions for weekly report")
+            listing = await week_listing(sessions, now=now, timezone=timezone)
+            fallback = Reply.from_text(
+                format_listing(listing.rows, title="本周番剧", timezone=timezone)
+            )
+            reply = fallback
+            factory = self._lifecycle.schedule_reply_factory
+            if factory is not None:
+                reply = await factory.build_weekly(
+                    rows=listing.rows,
+                    ctx=ChatContext(
+                        platform="qq",
+                        group_id=chat_group.external_group_id,
+                        user_id="",
+                        display_name="",
+                        unified_msg_origin=chat_group.unified_msg_origin,
+                        timezone=timezone,
+                    ),
+                    fallback=fallback,
+                    now=now,
+                )
+            asset_root = Path(os.environ.get("CARD_ASSET_ROOT", "/var/lib/anime-qqbot/cards"))
+            return reply_to_message_chain(reply, asset_root=asset_root)
         return render_release_batch({"text": f"[{job_type}] {payload}"})
 
-    async def _send_message(self, umo: str, chain: Any) -> None:
+    async def _send_message(self, umo: str, chain: Any) -> str | None:
         """Send via AstrBot's context.send_message when available.
 
         Falls back to ``context.send`` if the runtime SDK is older.
@@ -298,7 +414,57 @@ class OutboxDispatcher:
         # ``sender`` is invoked with the UMO and the chain.
         result = sender(umo, chain)
         if asyncio.iscoroutine(result):
-            await result
+            result = await result
+        return self._message_id(result)
+
+    @staticmethod
+    def _message_id(result: Any) -> str | None:
+        if isinstance(result, dict):
+            for key in ("message_id", "messageId"):
+                value = result.get(key)
+                if value is not None:
+                    return str(value)
+            data = result.get("data")
+            if isinstance(data, dict):
+                return OutboxDispatcher._message_id(data)
+        for name in ("message_id", "messageId"):
+            value = getattr(result, name, None)
+            if value is not None:
+                return str(value)
+        return None
+
+    async def _replace_weekly_essence(
+        self,
+        *,
+        publications: ContentPublicationRepository,
+        chat_group_id: UUID,
+        job_id: UUID,
+        message_id: str | None,
+        now: datetime,
+    ) -> None:
+        client = self._lifecycle.napcat_content
+        if client is None or message_id is None or not await client.set_essence(message_id):
+            await publications.set_essence_status(
+                notification_job_id=job_id,
+                status="failed",
+                now=now,
+            )
+            return
+        await publications.set_essence_status(
+            notification_job_id=job_id,
+            status="set",
+            now=now,
+        )
+        previous = await publications.previous_weekly_essence(
+            chat_group_id=chat_group_id,
+            exclude_job_id=job_id,
+        )
+        if (
+            previous is not None
+            and previous.platform_message_id is not None
+            and await client.delete_essence(previous.platform_message_id)
+        ):
+            await publications.mark_removed(previous.id, now=now)
 
 
 __all__ = ["OutboxDispatcher"]

@@ -70,6 +70,13 @@ def reply_to_event_result(event: Any, reply: Reply, *, asset_root: Path) -> Any:
     return event.plain_result(rendered.text or "（无内容）")
 
 
+def reply_to_message_chain(reply: Reply, *, asset_root: Path) -> Any:
+    rendered = render_reply(reply, asset_root=asset_root)
+    if rendered.chain is not None:
+        return _message_chain(rendered.chain)
+    return _message_chain([_plain_component(rendered.text or "（无内容）")])
+
+
 def _image_component(path: Path) -> Any:
     if components is None:
         return {"type": "image", "file": str(path)}
@@ -125,10 +132,37 @@ def render_release_batch(
     return _message_chain(chain)
 
 
+def render_daily_release_digest(payload: dict[str, Any]) -> Any:
+    """Render one low-noise daily summary from actual Mikan releases."""
+    period_date = str(payload.get("period_date", "今日"))
+    lines = [f"📺 {period_date} 番剧资源更新"]
+    raw_items = payload.get("items")
+    if isinstance(raw_items, list):
+        for item in raw_items:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title", "未命名番剧"))
+            episode = str(item.get("episode_label", "?"))
+            try:
+                episode = str(int(episode))
+            except ValueError:
+                pass
+            count = int(item.get("release_count", 1))
+            suffix = f"（{count} 个资源）" if count > 1 else ""
+            lines.append(f"• {title} · 第 {episode} 集{suffix}")
+    chain: list[Any] = []
+    if payload.get("at_all") is True:
+        chain.append(_at_component("all"))
+    chain.append(_plain_component("\n".join(lines)))
+    return _message_chain(chain)
+
+
 __all__ = [
     "RenderedReply",
     "render_airing_notification",
+    "render_daily_release_digest",
     "render_release_batch",
     "render_reply",
     "reply_to_event_result",
+    "reply_to_message_chain",
 ]

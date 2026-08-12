@@ -26,6 +26,14 @@ class GroupRuntimePolicy:
     mention_enabled: bool = True
     direct_shortcuts_enabled: bool = False
     active_notifications_enabled: bool = True
+    weekly_report_enabled: bool = False
+    weekly_report_weekday: int = 0
+    weekly_report_minute: int = 20 * 60
+    daily_digest_enabled: bool = False
+    daily_digest_at_all_enabled: bool = False
+    daily_digest_anchor_minute: int = 22 * 60 + 30
+    daily_digest_quiet_minutes: int = 20
+    daily_digest_cutoff_minute: int = 23 * 60 + 30
     quiet_start_minute: int | None = None
     quiet_end_minute: int | None = None
     group_interval_seconds: float | None = None
@@ -77,6 +85,14 @@ class GroupRuntimeSettingsRepository:
         mention_enabled: bool | None = None,
         direct_shortcuts_enabled: bool | None = None,
         active_notifications_enabled: bool | None = None,
+        weekly_report_enabled: bool | None = None,
+        weekly_report_weekday: int | None = None,
+        weekly_report_minute: int | None = None,
+        daily_digest_enabled: bool | None = None,
+        daily_digest_at_all_enabled: bool | None = None,
+        daily_digest_anchor_minute: int | None = None,
+        daily_digest_quiet_minutes: int | None = None,
+        daily_digest_cutoff_minute: int | None = None,
         quiet_start_minute: int | None = None,
         quiet_end_minute: int | None = None,
         clear_quiet_hours: bool = False,
@@ -98,6 +114,46 @@ class GroupRuntimeSettingsRepository:
                 active_notifications_enabled
                 if active_notifications_enabled is not None
                 else current.active_notifications_enabled
+            ),
+            weekly_report_enabled=(
+                weekly_report_enabled
+                if weekly_report_enabled is not None
+                else current.weekly_report_enabled
+            ),
+            weekly_report_weekday=(
+                weekly_report_weekday
+                if weekly_report_weekday is not None
+                else current.weekly_report_weekday
+            ),
+            weekly_report_minute=(
+                weekly_report_minute
+                if weekly_report_minute is not None
+                else current.weekly_report_minute
+            ),
+            daily_digest_enabled=(
+                daily_digest_enabled
+                if daily_digest_enabled is not None
+                else current.daily_digest_enabled
+            ),
+            daily_digest_at_all_enabled=(
+                daily_digest_at_all_enabled
+                if daily_digest_at_all_enabled is not None
+                else current.daily_digest_at_all_enabled
+            ),
+            daily_digest_anchor_minute=(
+                daily_digest_anchor_minute
+                if daily_digest_anchor_minute is not None
+                else current.daily_digest_anchor_minute
+            ),
+            daily_digest_quiet_minutes=(
+                daily_digest_quiet_minutes
+                if daily_digest_quiet_minutes is not None
+                else current.daily_digest_quiet_minutes
+            ),
+            daily_digest_cutoff_minute=(
+                daily_digest_cutoff_minute
+                if daily_digest_cutoff_minute is not None
+                else current.daily_digest_cutoff_minute
             ),
             group_interval_seconds=(
                 group_interval_seconds
@@ -213,6 +269,14 @@ def _policy(group: ChatGroup, setting: GroupRuntimeSetting | None) -> GroupRunti
         mention_enabled=setting.mention_enabled,
         direct_shortcuts_enabled=setting.direct_shortcuts_enabled,
         active_notifications_enabled=setting.active_notifications_enabled,
+        weekly_report_enabled=setting.weekly_report_enabled,
+        weekly_report_weekday=setting.weekly_report_weekday,
+        weekly_report_minute=setting.weekly_report_minute,
+        daily_digest_enabled=setting.daily_digest_enabled,
+        daily_digest_at_all_enabled=setting.daily_digest_at_all_enabled,
+        daily_digest_anchor_minute=setting.daily_digest_anchor_minute,
+        daily_digest_quiet_minutes=setting.daily_digest_quiet_minutes,
+        daily_digest_cutoff_minute=setting.daily_digest_cutoff_minute,
         quiet_start_minute=setting.quiet_start_minute,
         quiet_end_minute=setting.quiet_end_minute,
         group_interval_seconds=setting.group_interval_seconds,
@@ -231,6 +295,14 @@ def _setting_values(
         "mention_enabled": policy.mention_enabled,
         "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
         "active_notifications_enabled": policy.active_notifications_enabled,
+        "weekly_report_enabled": policy.weekly_report_enabled,
+        "weekly_report_weekday": policy.weekly_report_weekday,
+        "weekly_report_minute": policy.weekly_report_minute,
+        "daily_digest_enabled": policy.daily_digest_enabled,
+        "daily_digest_at_all_enabled": policy.daily_digest_at_all_enabled,
+        "daily_digest_anchor_minute": policy.daily_digest_anchor_minute,
+        "daily_digest_quiet_minutes": policy.daily_digest_quiet_minutes,
+        "daily_digest_cutoff_minute": policy.daily_digest_cutoff_minute,
         "quiet_start_minute": policy.quiet_start_minute,
         "quiet_end_minute": policy.quiet_end_minute,
         "group_interval_seconds": policy.group_interval_seconds,

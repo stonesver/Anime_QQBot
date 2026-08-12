@@ -30,6 +30,7 @@
         <button class="tab active" data-view="overview">总览</button>
         <button class="tab" data-view="catalog">番剧目录</button>
         <button class="tab" data-view="groups">群设置</button>
+        <button class="tab" data-view="content">内容运营</button>
         <button class="tab" data-view="subscriptions">订阅</button>
         <button class="tab" data-view="mappings">映射</button>
         <button class="tab" data-view="notifications">通知</button>
@@ -105,6 +106,38 @@
             <label class="search"><span>筛选</span><input id="group-query" type="search" placeholder="输入群号" /></label>
           </div>
           <div id="groups-content" class="table-wrap"></div>
+        </section>
+
+        <section id="view-content" class="view" aria-labelledby="content-title">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">LOW FREQUENCY PROGRAMMING</p>
+              <h2 id="content-title">番剧内容运营</h2>
+              <p>仅 Bot 持有者可在此配置；群主、管理员和群成员没有设置入口。</p>
+            </div>
+            <button class="button ghost" data-action="refresh-content">刷新</button>
+          </div>
+          <article class="panel">
+            <h3>每日资源汇总与每周周报</h3>
+            <p class="policy-note">每日汇总只使用真实发布资源；启用 @全体 后，发送前仍会检查 QQ 剩余额度。</p>
+            <div id="content-settings" class="table-wrap"></div>
+          </article>
+          <article class="panel policy-card">
+            <div>
+              <p class="section-kicker">GROUP POLL</p>
+              <h3>发起群投票</h3>
+              <p>候选来自内部番剧库并过滤禁用及敏感条目，每群同时只能有一个投票。</p>
+            </div>
+            <div class="policy-fields">
+              <label>目标群<select id="poll-group"></select></label>
+              <label>主题<select id="poll-theme"><option value="weekly_best">本周最佳</option><option value="next_week_anticipated">下周最期待</option><option value="season_favorite">本季度最喜欢</option><option value="group_watch">群内共看</option></select></label>
+              <label>持续小时<input id="poll-duration" type="number" min="1" max="168" value="48" /></label>
+            </div>
+            <div class="action-row"><button class="button ghost" data-action="suggest-poll">生成候选</button><button class="button" data-action="open-poll">发起投票</button></div>
+            <div id="poll-candidates" class="candidate-grid"><div class="empty">先生成 3–6 个候选。</div></div>
+          </article>
+          <h3 class="subheading">最近投票</h3>
+          <div id="content-polls" class="table-wrap"></div>
         </section>
 
         <section id="view-subscriptions" class="view" aria-labelledby="subscriptions-title">

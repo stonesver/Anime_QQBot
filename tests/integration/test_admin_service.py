@@ -22,6 +22,7 @@ from anime_qqbot.persistence.models.catalog import (
     ExternalEntry,
     SourceSnapshot,
 )
+from anime_qqbot.persistence.models.notifications_v2 import NotificationJob
 from anime_qqbot.persistence.models.operations import AdminAuditEvent
 from anime_qqbot.persistence.models.subscriptions_v2 import FollowSubscription
 
@@ -329,11 +330,19 @@ async def test_admin_group_update_and_delivery_control_are_audited(
         group.external_group_id,
         actor="owner-hash",
         expected_version=1,
-        changes={"direct_shortcuts_enabled": True},
+        changes={
+            "direct_shortcuts_enabled": True,
+            "daily_digest_enabled": True,
+            "daily_digest_at_all_enabled": True,
+            "weekly_report_enabled": True,
+        },
     )
     paused = await service.set_global_delivery(paused=True, actor="owner-hash", reason="canary")
 
     assert updated["direct_shortcuts_enabled"] is True
+    assert updated["daily_digest_enabled"] is True
+    assert updated["daily_digest_at_all_enabled"] is True
+    assert updated["weekly_report_enabled"] is True
     assert updated["version"] == 2
     assert paused["paused"] is True
     async with session_factory() as session:
@@ -347,6 +356,54 @@ async def test_admin_group_update_and_delivery_control_are_audited(
             .all()
         )
     assert actions == ["group.policy.update", "delivery.pause"]
+
+
+async def test_bot_owner_can_open_and_close_content_poll_from_admin(session_factory) -> None:
+    group, _ = await _seed(session_factory)
+    now = datetime(2026, 7, 29, tzinfo=UTC)
+    anime_ids = []
+    async with session_factory() as session, session.begin():
+        for index in range(2):
+            anime_id = uuid4()
+            anime_ids.append(anime_id)
+            session.add(
+                Anime(
+                    id=anime_id,
+                    nsfw_flag="false",
+                    disabled=False,
+                    display_title=f"投票候选{index + 2}",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        first = await session.scalar(select(Anime.id).where(Anime.display_title == "测试番剧"))
+    assert first is not None
+
+    service = AdminService(session_factory)
+    opened = await service.open_content_poll(
+        actor="owner-hash",
+        external_group_id=group.external_group_id,
+        theme="weekly_best",
+        anime_ids=[str(first), *(str(value) for value in anime_ids)],
+        duration_hours=48,
+    )
+    polls = await service.content_polls()
+    closed = await service.close_content_poll(opened["id"], actor="owner-hash")
+
+    assert polls[0]["status"] == "open"
+    assert len(polls[0]["candidates"]) == 3
+    assert closed["id"] == opened["id"]
+    async with session_factory() as session:
+        job_types = (
+            (
+                await session.execute(
+                    select(NotificationJob.job_type).order_by(NotificationJob.job_type)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert job_types == ["poll_open", "poll_result"]
 
 
 async def test_admin_can_cancel_one_subscription(session_factory) -> None:

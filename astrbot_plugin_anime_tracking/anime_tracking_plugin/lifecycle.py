@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from anime_qqbot.notifications.governor import GovernorLimits, SendGovernor
 from anime_qqbot.operations.napcat_status import (
+    NapCatGroupContentClient,
     NapCatOneBotClient,
     NapCatStatusMonitor,
 )
@@ -64,6 +65,7 @@ class PluginLifecycle:
         self.sessions: async_sessionmaker[AsyncSession] | None = None
         self.dispatcher: Any | None = None
         self.napcat_monitor: NapCatStatusMonitor | None = None
+        self.napcat_content: NapCatGroupContentClient | None = None
         self.card_reply_factory: Any | None = None
         self.schedule_reply_factory: Any | None = None
         self._local_poster_cache: PosterCache | None = None
@@ -109,6 +111,9 @@ class PluginLifecycle:
             self.schedule_reply_factory = None
             self._local_poster_cache = None
             self.napcat_monitor = None
+            if self.napcat_content is not None:
+                await self.napcat_content.close()
+            self.napcat_content = None
             raise
         logger.info("anime_tracking plugin started")
 
@@ -135,6 +140,7 @@ class PluginLifecycle:
             repository=RuntimeComponentStatusRepository(self.sessions),
             interval_seconds=float(os.environ.get("NAPCAT_STATUS_POLL_SECONDS", "60")),
         )
+        self.napcat_content = NapCatGroupContentClient(base_url=base_url, token=token)
         self._tasks.append(asyncio.create_task(self.napcat_monitor.run()))
 
     def _start_card_presentation(self) -> None:
@@ -199,12 +205,15 @@ class PluginLifecycle:
             self._tasks.clear()
         if self.dispatcher is not None:
             await self.dispatcher.stop()
+        if self.napcat_content is not None:
+            await self.napcat_content.close()
         if self._engine is not None:
             await self._engine.dispose()
             self._engine = None
         self.sessions = None
         self.dispatcher = None
         self.napcat_monitor = None
+        self.napcat_content = None
         self.card_reply_factory = None
         self.schedule_reply_factory = None
         self._local_poster_cache = None

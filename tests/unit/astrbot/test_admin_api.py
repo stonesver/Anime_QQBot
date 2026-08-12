@@ -29,10 +29,11 @@ def test_admin_api_registers_only_plugin_prefixed_routes() -> None:
 
     AdminWebAPI(context, _unused_lifecycle)
 
-    assert len(context.routes) == 17
+    assert len(context.routes) == 21
     assert all(route.startswith("/anime_tracking/") for route, *_ in context.routes)
     assert all("GET" in methods or "POST" in methods for _, _, methods, _ in context.routes)
     assert any(route == "/anime_tracking/catalog" for route, *_ in context.routes)
+    assert any(route == "/anime_tracking/content-polls/open" for route, *_ in context.routes)
 
 
 @pytest.mark.asyncio
