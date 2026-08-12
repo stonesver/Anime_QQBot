@@ -59,6 +59,7 @@ from .rendering import (
     render_airing_notification,
     render_daily_release_digest,
     render_release_batch,
+    render_text_notification,
     reply_to_message_chain,
 )
 
@@ -369,6 +370,8 @@ class OutboxDispatcher:
             )
         if job_type == "daily_release_digest":
             return render_daily_release_digest(payload)
+        if job_type in {"poll_open", "poll_result"}:
+            return render_text_notification(payload)
         if job_type == "weekly_report":
             sessions = self._lifecycle.sessions
             timezone = ZoneInfo(str(payload.get("timezone") or chat_group.timezone))

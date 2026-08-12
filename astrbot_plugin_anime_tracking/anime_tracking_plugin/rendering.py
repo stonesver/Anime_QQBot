@@ -157,12 +157,21 @@ def render_daily_release_digest(payload: dict[str, Any]) -> Any:
     return _message_chain(chain)
 
 
+def render_text_notification(payload: dict[str, Any]) -> Any:
+    """Render a preformatted content-operation message without debug wrappers."""
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("content notification text is required")
+    return _message_chain([_plain_component(text)])
+
+
 __all__ = [
     "RenderedReply",
     "render_airing_notification",
     "render_daily_release_digest",
     "render_release_batch",
     "render_reply",
+    "render_text_notification",
     "reply_to_event_result",
     "reply_to_message_chain",
 ]

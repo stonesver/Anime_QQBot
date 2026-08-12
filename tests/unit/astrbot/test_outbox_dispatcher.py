@@ -315,6 +315,30 @@ async def test_daily_at_all_is_not_sent_when_quota_is_unavailable(_clean: None) 
     await lc.shutdown()
 
 
+@pytest.mark.parametrize("job_type", ["poll_open", "poll_result"])
+@pytest.mark.asyncio
+async def test_poll_open_sends_formatted_text_without_debug_payload_wrapper(
+    _clean: None,
+    job_type: str,
+) -> None:
+    await _seed_chat_group(umo="umo-poll")
+    expected = "📊 群内共看\n截止：08-14 10:08\n\n1. 测试番剧 · 0 票"
+    await _seed_job(job_type=job_type, payload={"text": expected})
+    ctx = FakeContext()
+    lc = PluginLifecycle(context=ctx, start_dispatcher=False)
+    await lc.start()
+    d = OutboxDispatcher(lifecycle=lc)
+
+    await d._tick()  # type: ignore[reportPrivateUsage]
+
+    assert len(ctx.sent) == 1
+    chain = ctx.sent[0][1]
+    assert hasattr(chain, "chain")
+    assert chain.chain == [{"type": "plain", "text": expected}]
+    await d.stop()
+    await lc.shutdown()
+
+
 @pytest.mark.asyncio
 async def test_weekly_report_sets_new_essence_before_removing_old(_clean: None) -> None:
     from anime_qqbot.persistence.models.content_operations import ContentPublication
