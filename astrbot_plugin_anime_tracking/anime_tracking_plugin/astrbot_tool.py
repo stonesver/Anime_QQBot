@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import datetime
 import logging
+import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -39,9 +41,11 @@ from .readonly_tool import (
     ReadonlyAnimeAction,
     ReadonlyAnimeExecutor,
     ReadonlyAnimeRequest,
+    ReadonlyToolOutcome,
     ReadonlyToolResult,
     ReadonlyToolStatus,
 )
+from .tool_image_presenter import ToolImagePresenter
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +113,7 @@ class AnimeReadonlyTool(FunctionTool):  # type: ignore[misc]
         repr=False,
     )
     policy_guard: LLMPolicyGuard | None = Field(default=None, exclude=True, repr=False)
+    image_presenter: ToolImagePresenter | None = Field(default=None, exclude=True, repr=False)
 
     async def call(
         self,
@@ -147,6 +152,7 @@ class AnimeReadonlyTool(FunctionTool):  # type: ignore[misc]
             )
         if self.lifecycle_provider is None:
             return self._finish(event, _unavailable(request.action))
+        image_reply_enabled = False
         try:
             lifecycle = await self.lifecycle_provider()
             if lifecycle.sessions is None:
@@ -163,6 +169,7 @@ class AnimeReadonlyTool(FunctionTool):  # type: ignore[misc]
                 )
             )
             policy = await GroupRuntimeSettingsRepository(lifecycle.sessions).get_policy(group.id)
+            image_reply_enabled = policy.llm_image_reply_enabled
             chat_context = ChatContext(
                 platform=envelope.platform,
                 group_id=envelope.group_id,
@@ -172,13 +179,22 @@ class AnimeReadonlyTool(FunctionTool):  # type: ignore[misc]
                 timezone=ZoneInfo(policy.timezone),
                 is_admin=envelope.is_owner,
             )
-            result = await ReadonlyAnimeExecutor(
-                EventAdapter(sessions=lifecycle.sessions)
+            outcome = await ReadonlyAnimeExecutor(
+                EventAdapter(
+                    sessions=lifecycle.sessions,
+                    card_reply_builder=lifecycle.card_reply_factory,
+                    schedule_reply_builder=lifecycle.schedule_reply_factory,
+                )
             ).execute(ctx=chat_context, request=request, now=now)
         except Exception:
             logger.exception("anime_readonly_query failed")
-            result = _unavailable(request.action)
-        return self._finish(event, result)
+            outcome = ReadonlyToolOutcome(_unavailable(request.action))
+        if image_reply_enabled and outcome.reply is not None and outcome.reply.kind == "image":
+            presenter = self.image_presenter or ToolImagePresenter(
+                Path(os.environ.get("CARD_ASSET_ROOT", "/var/lib/anime-qqbot/cards"))
+            )
+            await presenter.send(event, outcome.reply)
+        return self._finish(event, outcome.result)
 
     def _finish(self, event: Any, result: ReadonlyToolResult) -> str:
         if self.policy_guard is not None:

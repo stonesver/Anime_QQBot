@@ -1,5 +1,12 @@
+import pytest
+
 from anime_qqbot.application.intents import Intent, IntentKind
 from anime_qqbot.application.parser import ParseFailure
+from anime_qqbot.interactions.mention_policy import (
+    DEFAULT_MENTION_ALIASES,
+    MentionCommandPolicy,
+    MentionPolicyValidationError,
+)
 from anime_qqbot.interactions.parser import parse_mention_command, parse_reply_number
 
 
@@ -29,3 +36,29 @@ def test_plain_number_has_separate_reply_parser() -> None:
     assert isinstance(result, Intent)
     assert result.selection_number == 2
     assert isinstance(parse_reply_number("第 2 个"), ParseFailure)
+
+
+def test_global_alias_policy_replaces_one_actions_trigger_words() -> None:
+    aliases = {key: list(values) for key, values in DEFAULT_MENTION_ALIASES.items()}
+    aliases["today"] = ["今天更新啥"]
+    policy = MentionCommandPolicy.from_mapping(aliases)
+
+    custom = parse_mention_command("今天更新啥", policy=policy)
+
+    assert isinstance(custom, Intent)
+    assert custom.kind == IntentKind.TODAY
+    assert isinstance(parse_mention_command("今天有什么番", policy=policy), ParseFailure)
+
+
+def test_global_alias_policy_rejects_non_list_values_and_conflicts() -> None:
+    aliases: dict[str, object] = {
+        key: list(values) for key, values in DEFAULT_MENTION_ALIASES.items()
+    }
+    aliases["today"] = {"unexpected": "object"}
+    with pytest.raises(MentionPolicyValidationError, match="today aliases must be a list"):
+        MentionCommandPolicy.from_mapping(aliases)  # type: ignore[arg-type]
+
+    aliases = {key: list(values) for key, values in DEFAULT_MENTION_ALIASES.items()}
+    aliases["week"] = [str(aliases["today"][0])]  # type: ignore[index]
+    with pytest.raises(MentionPolicyValidationError, match="conflicts"):
+        MentionCommandPolicy.from_mapping(aliases)  # type: ignore[arg-type]

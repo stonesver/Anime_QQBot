@@ -80,7 +80,11 @@ class CardReplyFactory:
                 if scene in {CardScene.UNIQUE_SEARCH, CardScene.DETAIL}
                 else None
             )
-            return Reply.from_image(rendered.path, hint=hint)
+            return Reply.from_image(
+                rendered.path,
+                hint=hint,
+                fallback_text=text_fallback.blocks[0].text,
+            )
         except Exception as exc:
             logger.warning(
                 "card_reply_factory.fallback",

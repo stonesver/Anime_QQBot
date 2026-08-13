@@ -9,6 +9,7 @@ from anime_qqbot.persistence.models.content_operations import (
 from anime_qqbot.persistence.models.interaction import (
     GroupRuntimeSetting,
     InteractionSession,
+    MentionCommandPolicyRow,
 )
 from anime_qqbot.persistence.models.operations import (
     AdminAuditEvent,
@@ -25,5 +26,6 @@ __all__ = [
     "DeliveryControl",
     "GroupRuntimeSetting",
     "InteractionSession",
+    "MentionCommandPolicyRow",
     "OperatorJob",
 ]

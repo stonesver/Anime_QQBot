@@ -15,6 +15,11 @@ from anime_qqbot.groups.repository_v2 import ChatGroupRepository, GroupEvent
 from anime_qqbot.groups.settings import (
     GroupRuntimePolicy,
     GroupRuntimeSettingsRepository,
+    LLMMode,
+)
+from anime_qqbot.interactions.mention_policy import (
+    MentionCommandPolicy,
+    MentionCommandPolicyRepository,
 )
 from anime_qqbot.interactions.parser import (
     parse_direct_shortcut,
@@ -30,6 +35,11 @@ from anime_qqbot.operations.repository import AdminAuditRepository
 from .adapter import EventAdapter, Reply
 from .event_envelope import EventEnvelope
 from .lifecycle import PluginLifecycle
+
+LLM_DISABLED_HELP = (
+    "本群未启用 LLM 问答。可以 @我发送“今天播什么”“本周番剧”"
+    "“搜番 番剧名”或“我的订阅”，也可以使用 /番剧 帮助。"
+)
 
 
 @dataclass(frozen=True)
@@ -49,7 +59,8 @@ class InteractionGateway:
         self._lifecycle = lifecycle
 
     async def route(self, envelope: EventEnvelope) -> GatewayResult:
-        if not bool(self._lifecycle.config.get("interaction_gateway_enabled", False)):
+        legacy_enabled = bool(self._lifecycle.config.get("interaction_gateway_enabled", False))
+        if not legacy_enabled and not envelope.mentions_bot:
             return GatewayResult.ignored()
         sessions = self._lifecycle.sessions
         if sessions is None or not envelope.group_id or not envelope.user_id:
@@ -70,19 +81,28 @@ class InteractionGateway:
         if not policy.passive_enabled:
             return GatewayResult.ignored()
 
-        owner_result = await self._owner_command(envelope, group.id, policy_repo, policy, now)
-        if owner_result is not None:
-            return owner_result
+        if legacy_enabled:
+            owner_result = await self._owner_command(envelope, group.id, policy_repo, policy, now)
+            if owner_result is not None:
+                return owner_result
 
-        intent, matched = self._parse(envelope, policy)
+        mention_policy = await MentionCommandPolicyRepository(sessions).get()
+        intent, matched = self._parse(
+            envelope,
+            policy,
+            mention_policy,
+            legacy_enabled=legacy_enabled,
+        )
         if not matched:
+            if envelope.mentions_bot and policy.llm_mode is LLMMode.DISABLED:
+                return GatewayResult(
+                    matched=True,
+                    text=LLM_DISABLED_HELP,
+                    stop_propagation=True,
+                )
             return GatewayResult.ignored()
         if isinstance(intent, ParseFailure):
-            return GatewayResult(
-                matched=True,
-                text=f"没听懂这个操作：{intent.reason}",
-                stop_propagation=True,
-            )
+            return GatewayResult.ignored()
         if bool(self._lifecycle.config.get("send_governor_enabled", False)):
             permit = self._lifecycle.governor.acquire(
                 SendRequest(
@@ -111,6 +131,7 @@ class InteractionGateway:
         adapter = EventAdapter(
             sessions=sessions,
             card_reply_builder=self._lifecycle.card_reply_factory,
+            schedule_reply_builder=self._lifecycle.schedule_reply_factory,
         )
         reply = await adapter.handle_intent(ctx=ctx, intent=intent, now=now)
         if reply.candidate_items:
@@ -124,19 +145,27 @@ class InteractionGateway:
 
     @staticmethod
     def _parse(
-        envelope: EventEnvelope, policy: GroupRuntimePolicy
+        envelope: EventEnvelope,
+        policy: GroupRuntimePolicy,
+        mention_policy: MentionCommandPolicy,
+        *,
+        legacy_enabled: bool,
     ) -> tuple[Intent | ParseFailure, bool]:
-        if envelope.text.startswith("/番剧"):
+        if legacy_enabled and envelope.text.startswith("/番剧"):
             return parse_fixed_command(envelope.text), True
         if envelope.mentions_bot and getattr(policy, "mention_enabled", False):
-            return parse_mention_command(_strip_textual_mention(envelope.text)), True
-        if envelope.reply_to_message_id:
+            parsed = parse_mention_command(
+                _strip_textual_mention(envelope.text),
+                policy=mention_policy,
+            )
+            return parsed, not isinstance(parsed, ParseFailure)
+        if legacy_enabled and envelope.reply_to_message_id:
             parsed_number = parse_reply_number(envelope.text)
             if not isinstance(parsed_number, ParseFailure):
                 # The adapter still validates scope and TTL. A plain-number
                 # flow is ignored unless the reply component is present.
                 return parsed_number, True
-        if getattr(policy, "direct_shortcuts_enabled", False):
+        if legacy_enabled and getattr(policy, "direct_shortcuts_enabled", False):
             parsed = parse_direct_shortcut(envelope.text)
             return parsed, not isinstance(parsed, ParseFailure)
         return ParseFailure("no interaction entry matched"), False
@@ -184,12 +213,27 @@ class InteractionGateway:
             "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
             "active_notifications_enabled": policy.active_notifications_enabled,
         }
-        changed = await policy_repo.update_policy(
-            group_id,
-            expected_version=policy.version,
-            now=now,
-            **{field: value},
-        )
+        if field == "mention_enabled":
+            changed = await policy_repo.update_policy(
+                group_id,
+                expected_version=policy.version,
+                now=now,
+                mention_enabled=value,
+            )
+        elif field == "direct_shortcuts_enabled":
+            changed = await policy_repo.update_policy(
+                group_id,
+                expected_version=policy.version,
+                now=now,
+                direct_shortcuts_enabled=value,
+            )
+        else:
+            changed = await policy_repo.update_policy(
+                group_id,
+                expected_version=policy.version,
+                now=now,
+                active_notifications_enabled=value,
+            )
         after: dict[str, object] = {
             "mention_enabled": changed.mention_enabled,
             "direct_shortcuts_enabled": changed.direct_shortcuts_enabled,
@@ -220,4 +264,4 @@ def _strip_textual_mention(text: str) -> str:
     return stripped
 
 
-__all__ = ["GatewayResult", "InteractionGateway"]
+__all__ = ["LLM_DISABLED_HELP", "GatewayResult", "InteractionGateway"]

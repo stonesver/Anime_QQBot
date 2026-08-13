@@ -1,5 +1,5 @@
 const bridge = window.AstrBotPluginPage;
-const state = { view: "overview", groups: [], pollCandidates: [], writesEnabled: true, overviewLoading: false };
+const state = { view: "overview", groups: [], mentionPolicy: null, pollCandidates: [], writesEnabled: true, overviewLoading: false };
 const $ = (selector) => document.querySelector(selector);
 const OVERVIEW_REFRESH_MS = 30_000;
 
@@ -121,27 +121,55 @@ async function loadCatalog() {
 }
 
 async function loadGroups() {
-  loading("#groups-content");
+  loading("#groups-content"); loading("#mention-policy-content");
   try {
-    const data = await bridge.apiGet("groups", { query: $("#group-query").value, page: 1, page_size: 50 });
+    const [data, mentionPolicy] = await Promise.all([
+      bridge.apiGet("groups", { query: $("#group-query").value, page: 1, page_size: 50 }),
+      bridge.apiGet("mention-policy"),
+    ]);
     state.groups = data.items;
+    state.mentionPolicy = mentionPolicy;
+    renderMentionPolicy(mentionPolicy);
     if (!data.items.length) return $("#groups-content").innerHTML = empty("没有匹配的群。");
-    $("#groups-content").innerHTML = `<table><thead><tr><th>群</th><th>通用聊天</th><th>@入口</th><th>短命令</th><th>主动提醒</th><th>状态</th><th>操作</th></tr></thead><tbody>${
+    $("#groups-content").innerHTML = `<table><thead><tr><th>群</th><th>LLM 模式</th><th>LLM 图片</th><th>固定 @</th><th>短命令</th><th>主动提醒</th><th>状态</th><th>操作</th></tr></thead><tbody>${
       data.items.map((item) => `<tr>
         <td>${escapeHtml(item.group_id)}</td>
-        <td>${item.general_chat_enabled ? "开" : "关"}</td>
-        <td>${item.mention_enabled ? "开" : "关"}</td>
+        <td><select data-group-policy="${escapeHtml(item.group_id)}" data-field="llm_mode">
+          <option value="disabled" ${item.llm_mode === "disabled" ? "selected" : ""}>禁用</option>
+          <option value="anime_only" ${item.llm_mode === "anime_only" ? "selected" : ""}>仅番剧</option>
+          <option value="general" ${item.llm_mode === "general" ? "selected" : ""}>通用聊天</option>
+        </select></td>
+        <td><input type="checkbox" data-group-policy="${escapeHtml(item.group_id)}" data-field="llm_image_reply_enabled" ${item.llm_image_reply_enabled ? "checked" : ""}></td>
+        <td><input type="checkbox" data-group-policy="${escapeHtml(item.group_id)}" data-field="mention_enabled" ${item.mention_enabled ? "checked" : ""}></td>
         <td>${item.direct_shortcuts_enabled ? "开" : "关"}</td>
         <td>${item.active_notifications_enabled ? "开" : "关"}</td>
         <td>${item.paused ? status("paused") : status("active")}</td>
         <td><div class="action-row">
-          <button class="button small ghost" data-group="${escapeHtml(item.group_id)}" data-toggle="general_chat_enabled">切换通用聊天</button>
+          <button class="button small" data-group-policy-save="${escapeHtml(item.group_id)}">保存 LLM / @</button>
           <button class="button small ghost" data-group="${escapeHtml(item.group_id)}" data-toggle="direct_shortcuts_enabled">切换短命令</button>
           <button class="button small ghost" data-group="${escapeHtml(item.group_id)}" data-toggle="active_notifications_enabled">切换提醒</button>
         </div></td>
       </tr>`).join("")
     }</tbody></table>`;
   } catch (reason) { error("#groups-content", reason); }
+}
+
+const mentionActionLabels = {
+  today: "今天播什么", week: "本周播什么", search: "搜索番剧", detail: "番剧详情",
+  next: "下次放送", resource_detail: "资源详情", my_subscriptions: "我的订阅",
+  subscribe: "订阅番剧", unsubscribe: "取消订阅", help: "帮助",
+};
+
+function renderMentionPolicy(policy) {
+  const aliases = policy.aliases || {};
+  $("#mention-policy-content").innerHTML = `<div class="policy-fields mention-policy-fields">${Object.entries(mentionActionLabels).map(([action, label]) => `
+    <label>${escapeHtml(label)}<textarea rows="3" data-mention-action="${action}">${escapeHtml((aliases[action] || []).join("\n"))}</textarea></label>
+  `).join("")}</div>
+  <p class="policy-note">版本 ${escapeHtml(policy.version)} · ${policy.customized ? "已自定义" : "使用默认短语"}</p>
+  <div class="action-row">
+    <button class="button" data-action="save-mention-policy">保存固定短语</button>
+    <button class="button ghost" data-action="restore-mention-policy">恢复默认</button>
+  </div>`;
 }
 
 async function loadSubscriptions() {
@@ -300,6 +328,28 @@ document.addEventListener("click", async (event) => {
       const field = target.dataset.toggle;
       await bridge.apiPost(`groups/${item.group_id}/update`, { expected_version: item.version, [field]: !item[field] });
       toast("群设置已保存"); return loadGroups();
+    }
+    if (target.dataset.groupPolicySave) {
+      const groupId = target.dataset.groupPolicySave;
+      const item = state.groups.find((row) => row.group_id === groupId);
+      const fields = [...document.querySelectorAll(`[data-group-policy="${CSS.escape(groupId)}"]`)];
+      const payload = { expected_version: item.version };
+      fields.forEach((node) => { payload[node.dataset.field] = node.type === "checkbox" ? node.checked : node.value; });
+      await bridge.apiPost(`groups/${groupId}/update`, payload);
+      toast("LLM 与固定 @ 设置已保存"); return loadGroups();
+    }
+    if (target.dataset.action === "save-mention-policy") {
+      const aliases = {};
+      document.querySelectorAll("[data-mention-action]").forEach((node) => {
+        aliases[node.dataset.mentionAction] = node.value.split("\n").map((value) => value.trim()).filter(Boolean);
+      });
+      await bridge.apiPost("mention-policy/update", { expected_version: state.mentionPolicy.version, aliases });
+      toast("全局固定短语已保存"); return loadGroups();
+    }
+    if (target.dataset.action === "restore-mention-policy") {
+      if (!await confirmAction("恢复默认固定短语", "所有群会立即恢复内置固定短语。")) return;
+      await bridge.apiPost("mention-policy/restore", { expected_version: state.mentionPolicy.version });
+      toast("已恢复默认固定短语"); return loadGroups();
     }
     if (target.dataset.action === "refresh-content") return loadContent();
     if (target.dataset.contentSave) {

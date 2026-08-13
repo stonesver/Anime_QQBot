@@ -29,8 +29,8 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; overflow-x: hidden; color: var(--ink); background: var(--paper); }
-button, input, select { font: inherit; }
-button:focus-visible, input:focus-visible, select:focus-visible {
+button, input, select, textarea { font: inherit; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--signal) 45%, transparent);
   outline-offset: 2px;
 }
@@ -148,7 +148,9 @@ tr:last-child td { border-bottom: 0; }
 .policy-card p { color: var(--muted); }
 .policy-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
 .policy-fields label { display: grid; gap: 6px; color: var(--ink); font-weight: 650; }
-.policy-fields input { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+.policy-fields input, .policy-fields textarea { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+.mention-policy-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mention-policy-fields textarea { resize: vertical; line-height: 1.5; }
 .policy-fields small, .policy-note { font-size: 13px; }
 .candidate-grid {
   display: grid;

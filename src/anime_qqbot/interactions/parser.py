@@ -6,6 +6,10 @@ import re
 
 from anime_qqbot.application.intents import Intent, IntentKind
 from anime_qqbot.application.parser import ParseFailure, parse_fixed_command
+from anime_qqbot.interactions.mention_policy import (
+    DEFAULT_MENTION_COMMAND_POLICY,
+    MentionCommandPolicy,
+)
 
 _DIRECT_EXACT: dict[str, IntentKind] = {
     "今日番剧": IntentKind.TODAY,
@@ -17,23 +21,22 @@ _DIRECT_WITH_QUERY: tuple[tuple[re.Pattern[str], IntentKind], ...] = (
     (re.compile(r"^追番\s+(.+)$"), IntentKind.SUBSCRIBE),
     (re.compile(r"^退订\s+(.+)$"), IntentKind.UNSUBSCRIBE),
 )
-_MENTION_EXACT: dict[str, IntentKind] = {
-    "今天有什么": IntentKind.TODAY,
-    "今天有什么番": IntentKind.TODAY,
-    "今日番剧": IntentKind.TODAY,
-    "本周有什么": IntentKind.WEEK,
-    "本周番剧": IntentKind.WEEK,
-    "我的追番": IntentKind.MY_SUBSCRIPTIONS,
-    "我的订阅": IntentKind.MY_SUBSCRIPTIONS,
-    "帮助": IntentKind.HELP,
-}
-_MENTION_PATTERNS: tuple[tuple[re.Pattern[str], IntentKind], ...] = (
-    (re.compile(r"^(?:搜番|搜索|找番)\s+(.+)$"), IntentKind.SEARCH),
-    (re.compile(r"^(?:看|详情)\s+(.+)$"), IntentKind.DETAIL),
-    (re.compile(r"^(?:追番|订阅)\s+(.+)$"), IntentKind.SUBSCRIBE),
-    (re.compile(r"^(?:退订|取消订阅)\s+(.+)$"), IntentKind.UNSUBSCRIBE),
-)
 _NUMBER_RE = re.compile(r"^([1-9]\d?)$")
+
+_EXACT_ACTIONS = {
+    "today": IntentKind.TODAY,
+    "week": IntentKind.WEEK,
+    "my_subscriptions": IntentKind.MY_SUBSCRIPTIONS,
+    "help": IntentKind.HELP,
+}
+_PREFIX_ACTIONS = {
+    "search": IntentKind.SEARCH,
+    "detail": IntentKind.DETAIL,
+    "next": IntentKind.NEXT,
+    "resource_detail": IntentKind.RESOURCE_DETAIL,
+    "subscribe": IntentKind.SUBSCRIBE,
+    "unsubscribe": IntentKind.UNSUBSCRIBE,
+}
 
 
 def parse_direct_shortcut(content: str) -> Intent | ParseFailure:
@@ -50,17 +53,26 @@ def parse_direct_shortcut(content: str) -> Intent | ParseFailure:
     return ParseFailure("not a direct shortcut")
 
 
-def parse_mention_command(content: str) -> Intent | ParseFailure:
+def parse_mention_command(
+    content: str,
+    *,
+    policy: MentionCommandPolicy = DEFAULT_MENTION_COMMAND_POLICY,
+) -> Intent | ParseFailure:
     raw = _normalize(content)
     if not raw:
         return Intent(kind=IntentKind.HELP, raw=content)
-    kind = _MENTION_EXACT.get(raw)
-    if kind is not None:
-        return Intent(kind=kind, raw=content)
-    for pattern, kind in _MENTION_PATTERNS:
-        match = pattern.fullmatch(raw)
-        if match:
-            return _target_intent(kind, match.group(1), raw=content)
+    for action, kind in _EXACT_ACTIONS.items():
+        if raw in policy.aliases[action]:
+            return Intent(kind=kind, raw=content)
+    for action, kind in _PREFIX_ACTIONS.items():
+        for prefix in sorted(policy.aliases[action], key=len, reverse=True):
+            marker = f"{prefix} "
+            if not raw.startswith(marker):
+                continue
+            target = raw[len(marker) :].strip()
+            if action == "resource_detail":
+                return parse_fixed_command(f"资源详情 {target}")
+            return _target_intent(kind, target, raw=content)
     number = _selection_number(raw)
     if number is not None:
         return Intent(

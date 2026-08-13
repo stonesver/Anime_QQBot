@@ -106,6 +106,14 @@
             <label class="search"><span>筛选</span><input id="group-query" type="search" placeholder="输入群号" /></label>
           </div>
           <div id="groups-content" class="table-wrap"></div>
+          <article class="panel policy-card" aria-labelledby="mention-policy-title">
+            <div>
+              <p class="section-kicker">ZERO LLM ROUTING</p>
+              <h3 id="mention-policy-title">全局固定 @ 短语</h3>
+              <p>所有群统一使用。每行一个短语；搜索、详情、订阅等动作会把短语后的内容作为参数。固定短语直接走本地番剧功能，不消耗 MiniMax。</p>
+            </div>
+            <div id="mention-policy-content" class="loading">正在读取固定短语…</div>
+          </article>
         </section>
 
         <section id="view-content" class="view" aria-labelledby="content-title">

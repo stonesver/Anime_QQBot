@@ -13,6 +13,7 @@ from anime_qqbot.application.admin_service import (
     AdminValidationError,
 )
 from anime_qqbot.groups.settings import PolicyVersionConflictError
+from anime_qqbot.interactions.mention_policy import MentionPolicyVersionConflictError
 
 try:
     from astrbot.api.web import (  # type: ignore[import-not-found]
@@ -56,6 +57,7 @@ class AdminWebAPI:
             ("notifications", self.notifications, ["GET"]),
             ("sources", self.sources, ["GET"]),
             ("mapping-policy", self.mapping_policy, ["GET"]),
+            ("mention-policy", self.mention_policy, ["GET"]),
             ("jobs", self.jobs, ["GET"]),
             ("controls", self.controls, ["GET"]),
             ("content-polls", self.content_polls, ["GET"]),
@@ -66,6 +68,8 @@ class AdminWebAPI:
             ("delivery/global", self.global_delivery, ["POST"]),
             ("jobs/enqueue", self.enqueue_job, ["POST"]),
             ("mapping-policy", self.update_mapping_policy, ["POST"]),
+            ("mention-policy/update", self.update_mention_policy, ["POST"]),
+            ("mention-policy/restore", self.restore_mention_policy, ["POST"]),
             (
                 "subscriptions/<subscription_id>/cancel",
                 self.cancel_subscription,
@@ -134,6 +138,9 @@ class AdminWebAPI:
     async def mapping_policy(self) -> object:
         return await self._read("mapping_policy")
 
+    async def mention_policy(self) -> object:
+        return await self._read("mention_policy")
+
     async def update_mapping_policy(self) -> object:
         payload = await self._json()
         return await self._write(
@@ -146,6 +153,27 @@ class AdminWebAPI:
             animeschedule_priority_window_days=payload.get("animeschedule_priority_window_days"),
             animeschedule_empty_cooldown_hours=payload.get("animeschedule_empty_cooldown_hours"),
             animeschedule_error_cooldown_hours=payload.get("animeschedule_error_cooldown_hours"),
+        )
+
+    async def update_mention_policy(self) -> object:
+        payload = await self._json()
+        expected_version = payload.get("expected_version")
+        if not isinstance(expected_version, int) or isinstance(expected_version, bool):
+            return error_response("expected_version must be an integer")
+        return await self._write(
+            "update_mention_policy",
+            expected_version=expected_version,
+            aliases=payload.get("aliases"),
+        )
+
+    async def restore_mention_policy(self) -> object:
+        payload = await self._json()
+        expected_version = payload.get("expected_version")
+        if not isinstance(expected_version, int) or isinstance(expected_version, bool):
+            return error_response("expected_version must be an integer")
+        return await self._write(
+            "restore_mention_policy",
+            expected_version=expected_version,
         )
 
     async def jobs(self) -> object:
@@ -265,7 +293,7 @@ class AdminWebAPI:
             return json_response({"ok": True, "result": result})
         except AdminNotFoundError as exc:
             return error_response(str(exc), status_code=404)
-        except PolicyVersionConflictError:
+        except (PolicyVersionConflictError, MentionPolicyVersionConflictError):
             return error_response("version conflict; refresh and retry", status_code=409)
         except (AdminValidationError, ValueError) as exc:
             return error_response(str(exc), status_code=400)

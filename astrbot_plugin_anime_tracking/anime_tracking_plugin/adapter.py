@@ -80,6 +80,7 @@ class Reply:
     candidate_items: list[CandidateItem] = field(default_factory=list)
     at_user_ids: list[str] = field(default_factory=list)
     error: str | None = None
+    fallback_text: str | None = None
 
     @classmethod
     def from_text(cls, text: str) -> Reply:
@@ -105,11 +106,17 @@ class Reply:
         return cls(kind="error", error=message)
 
     @classmethod
-    def from_image(cls, image_path: Path, *, hint: str | None = None) -> Reply:
+    def from_image(
+        cls,
+        image_path: Path,
+        *,
+        hint: str | None = None,
+        fallback_text: str | None = None,
+    ) -> Reply:
         blocks = [ReplyBlock(image_path=image_path)]
         if hint:
             blocks.append(ReplyBlock(text=hint))
-        return cls(kind="image", blocks=blocks)
+        return cls(kind="image", blocks=blocks, fallback_text=fallback_text)
 
 
 class CardReplyBuilder(Protocol):

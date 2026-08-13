@@ -57,6 +57,10 @@ class GroupRuntimeSetting(Base):
             "daily_digest_cutoff_minute - daily_digest_anchor_minute",
             name="ck_group_runtime_settings_digest_quiet",
         ),
+        CheckConstraint(
+            "llm_mode IN ('disabled', 'anime_only', 'general')",
+            name="ck_group_runtime_settings_llm_mode",
+        ),
         CheckConstraint("version > 0", name="ck_group_runtime_settings_version"),
     )
 
@@ -65,9 +69,8 @@ class GroupRuntimeSetting(Base):
         ForeignKey("chat_groups.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    general_chat_enabled: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    llm_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="anime_only")
+    llm_image_reply_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     mention_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     direct_shortcuts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     active_notifications_enabled: Mapped[bool] = mapped_column(
@@ -118,4 +121,21 @@ class InteractionSession(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
-__all__ = ["GroupRuntimeSetting", "InteractionSession"]
+class MentionCommandPolicyRow(Base):
+    __tablename__ = "mention_command_policies"
+    __table_args__ = (
+        CheckConstraint(
+            "jsonb_typeof(aliases) = 'object'",
+            name="ck_mention_command_policies_aliases_object",
+        ),
+        CheckConstraint("version > 0", name="ck_mention_command_policies_version"),
+    )
+
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    aliases: Mapped[dict[str, list[str]]] = mapped_column(JSONB, nullable=False)
+    customized: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+__all__ = ["GroupRuntimeSetting", "InteractionSession", "MentionCommandPolicyRow"]

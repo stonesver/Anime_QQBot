@@ -121,6 +121,50 @@ async def _index_for(table: str) -> list[str]:
         await engine.dispose()
 
 
+async def _seed_legacy_llm_settings() -> None:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO chat_groups "
+                    "(id, platform, external_group_id, timezone, enabled, created_at, updated_at) "
+                    "VALUES "
+                    "('00000000-0000-0000-0000-000000000101', 'qq', '101', "
+                    "'Asia/Shanghai', TRUE, now(), now()), "
+                    "('00000000-0000-0000-0000-000000000102', 'qq', '102', "
+                    "'Asia/Shanghai', TRUE, now(), now())"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO group_runtime_settings "
+                    "(chat_group_id, general_chat_enabled, updated_at) VALUES "
+                    "('00000000-0000-0000-0000-000000000101', FALSE, now()), "
+                    "('00000000-0000-0000-0000-000000000102', TRUE, now())"
+                )
+            )
+    finally:
+        await engine.dispose()
+
+
+async def _llm_modes() -> list[tuple[str, bool]]:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT llm_mode, llm_image_reply_enabled "
+                        "FROM group_runtime_settings ORDER BY chat_group_id"
+                    )
+                )
+            ).all()
+        return [(str(row[0]), bool(row[1])) for row in rows]
+    finally:
+        await engine.dispose()
+
+
 def test_empty_database_base_to_head() -> None:
     _run(_drop_public())
     _run_command("+head")
@@ -141,6 +185,7 @@ def test_empty_database_base_to_head() -> None:
     assert _run(_has_table("content_polls"))
     assert _run(_has_table("content_poll_candidates"))
     assert _run(_has_table("content_poll_votes"))
+    assert _run(_has_table("mention_command_policies"))
 
 
 def test_head_round_trip() -> None:
@@ -166,6 +211,17 @@ def test_head_round_trip() -> None:
     assert _run(_has_table("content_polls"))
     assert _run(_has_table("content_poll_candidates"))
     assert _run(_has_table("content_poll_votes"))
+    assert _run(_has_table("mention_command_policies"))
+
+
+def test_0019_preserves_legacy_general_chat_choice() -> None:
+    _run(_drop_public())
+    _run_command("+0018_minimax_readonly_tools")
+    _run(_seed_legacy_llm_settings())
+
+    _run_command("+head")
+
+    assert _run(_llm_modes()) == [("anime_only", True), ("general", True)]
 
 
 def test_0004_snapshot_forward() -> None:

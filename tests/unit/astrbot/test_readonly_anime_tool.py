@@ -98,12 +98,13 @@ async def test_executor_persists_and_returns_numbered_candidates() -> None:
         timezone=ZoneInfo("Asia/Shanghai"),
     )
 
-    result = await executor.execute(
+    outcome = await executor.execute(
         ctx=context,
         request=ReadonlyAnimeRequest.from_tool_args(action="search", query="胆大党"),
         now=datetime(2026, 8, 12, tzinfo=UTC),
     )
 
+    result = outcome.result
     assert result.status == ReadonlyToolStatus.OK
     assert result.content == "1. 胆大党 第一季\n2. 胆大党 第二季"
     assert result.candidate_count == 2
@@ -136,3 +137,29 @@ async def test_executor_resolves_current_season_in_group_timezone() -> None:
 
     assert adapter.intent.season_year == 2026
     assert adapter.intent.season_name == "夏"
+
+
+@pytest.mark.asyncio
+async def test_executor_preserves_image_reply_and_its_model_text_fallback(tmp_path) -> None:
+    image = tmp_path / "today.png"
+    image.touch()
+    adapter = FakeReadonlyAdapter(Reply.from_image(image, fallback_text="今日放送：测试番剧"))
+    executor = ReadonlyAnimeExecutor(adapter)
+    context = ChatContext(
+        platform="qq",
+        group_id="100",
+        user_id="200",
+        display_name="tester",
+        unified_msg_origin="umo:100",
+        timezone=ZoneInfo("Asia/Shanghai"),
+    )
+
+    outcome = await executor.execute(
+        ctx=context,
+        request=ReadonlyAnimeRequest.from_tool_args(action="today"),
+        now=datetime(2026, 8, 13, tzinfo=UTC),
+    )
+
+    assert outcome.result.content == "今日放送：测试番剧"
+    assert outcome.reply.kind == "image"
+    assert outcome.reply.blocks[0].image_path == image

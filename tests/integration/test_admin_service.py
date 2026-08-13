@@ -34,7 +34,8 @@ async def session_factory():
         await conn.exec_driver_sql(
             "TRUNCATE TABLE runtime_component_events, runtime_component_states, "
             "admin_audit_events, operator_jobs, delivery_controls, "
-            "interaction_sessions, group_runtime_settings, delivery_attempts, "
+            "interaction_sessions, mention_command_policies, group_runtime_settings, "
+            "delivery_attempts, "
             "notification_jobs, subscription_resource_filters, follow_subscriptions, "
             "source_snapshots, anime_source_links, anime_titles, airing_occurrences, "
             "external_entries, animes, source_sync_states, group_memberships, "
@@ -96,7 +97,8 @@ async def test_admin_read_models_are_safe_and_aggregated(session_factory) -> Non
 
     assert overview["groups"] == 1
     assert overview["subscriptions"] == 1
-    assert groups["items"][0]["general_chat_enabled"] is False
+    assert groups["items"][0]["llm_mode"] == "anime_only"
+    assert groups["items"][0]["llm_image_reply_enabled"] is True
     assert groups["items"][0]["direct_shortcuts_enabled"] is False
     assert "unified_msg_origin" not in groups["items"][0]
     assert subscriptions["items"][0]["user_id"] == "123…789"
@@ -367,7 +369,8 @@ async def test_admin_group_update_and_delivery_control_are_audited(
         actor="owner-hash",
         expected_version=1,
         changes={
-            "general_chat_enabled": True,
+            "llm_mode": "general",
+            "llm_image_reply_enabled": False,
             "direct_shortcuts_enabled": True,
             "daily_digest_enabled": True,
             "daily_digest_at_all_enabled": True,
@@ -376,7 +379,9 @@ async def test_admin_group_update_and_delivery_control_are_audited(
     )
     paused = await service.set_global_delivery(paused=True, actor="owner-hash", reason="canary")
 
+    assert updated["llm_mode"] == "general"
     assert updated["general_chat_enabled"] is True
+    assert updated["llm_image_reply_enabled"] is False
     assert updated["direct_shortcuts_enabled"] is True
     assert updated["daily_digest_enabled"] is True
     assert updated["daily_digest_at_all_enabled"] is True
@@ -394,6 +399,38 @@ async def test_admin_group_update_and_delivery_control_are_audited(
             .all()
         )
     assert actions == ["group.policy.update", "delivery.pause"]
+
+
+async def test_admin_updates_one_global_mention_alias_policy_and_audits_it(
+    session_factory,
+) -> None:
+    service = AdminService(session_factory)
+    initial = await service.mention_policy()
+    aliases = dict(initial["aliases"])
+    aliases["today"] = ["今天更新啥"]
+
+    changed = await service.update_mention_policy(
+        actor="owner-hash",
+        expected_version=int(initial["version"]),
+        aliases=aliases,
+    )
+
+    assert changed["customized"] is True
+    assert changed["aliases"]["today"] == ["今天更新啥"]
+    restored = await service.restore_mention_policy(
+        actor="owner-hash",
+        expected_version=int(changed["version"]),
+    )
+    assert restored["customized"] is False
+    assert "今天有什么番" in restored["aliases"]["today"]
+    assert restored["version"] == 3
+    async with session_factory() as session:
+        actions = (
+            await session.execute(
+                select(AdminAuditEvent.action).order_by(AdminAuditEvent.created_at)
+            )
+        ).scalars()
+        assert list(actions).count("mention.policy.update") == 2
 
 
 async def test_bot_owner_can_open_and_close_content_poll_from_admin(session_factory) -> None:

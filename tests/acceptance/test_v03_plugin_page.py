@@ -49,8 +49,14 @@ def test_page_covers_all_operations_sections_and_mobile() -> None:
     assert "future_mapped_without_exact_animes" in script
 
 
-def test_group_page_exposes_per_group_general_chat_toggle() -> None:
+def test_group_page_exposes_llm_and_global_mention_controls() -> None:
+    html = (PAGE / "index.html").read_text()
     script = (PAGE / "app.js").read_text()
 
-    assert "通用聊天" in script
-    assert 'data-toggle="general_chat_enabled"' in script
+    assert "全局固定 @ 短语" in html
+    assert 'data-field="llm_mode"' in script
+    assert 'data-field="llm_image_reply_enabled"' in script
+    assert 'data-field="mention_enabled"' in script
+    assert 'apiGet("mention-policy")' in script
+    assert 'apiPost("mention-policy/update"' in script
+    assert 'apiPost("mention-policy/restore"' in script

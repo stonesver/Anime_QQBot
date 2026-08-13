@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -18,12 +19,19 @@ class PolicyVersionConflictError(RuntimeError):
     """The policy changed after the caller read it."""
 
 
+class LLMMode(StrEnum):
+    DISABLED = "disabled"
+    ANIME_ONLY = "anime_only"
+    GENERAL = "general"
+
+
 @dataclass(frozen=True)
 class GroupRuntimePolicy:
     chat_group_id: UUID
     timezone: str
     group_enabled: bool
-    general_chat_enabled: bool = False
+    llm_mode: LLMMode = LLMMode.ANIME_ONLY
+    llm_image_reply_enabled: bool = True
     mention_enabled: bool = True
     direct_shortcuts_enabled: bool = False
     active_notifications_enabled: bool = True
@@ -46,6 +54,14 @@ class GroupRuntimePolicy:
     @property
     def passive_enabled(self) -> bool:
         return self.group_enabled and not self.paused
+
+    @property
+    def llm_enabled(self) -> bool:
+        return self.llm_mode is not LLMMode.DISABLED
+
+    @property
+    def general_chat_enabled(self) -> bool:
+        return self.llm_mode is LLMMode.GENERAL
 
     @property
     def proactive_enabled(self) -> bool:
@@ -83,7 +99,8 @@ class GroupRuntimeSettingsRepository:
         *,
         expected_version: int,
         now: datetime,
-        general_chat_enabled: bool | None = None,
+        llm_mode: LLMMode | None = None,
+        llm_image_reply_enabled: bool | None = None,
         mention_enabled: bool | None = None,
         direct_shortcuts_enabled: bool | None = None,
         active_notifications_enabled: bool | None = None,
@@ -104,10 +121,11 @@ class GroupRuntimeSettingsRepository:
         current = await self.get_policy(chat_group_id)
         desired = replace(
             current,
-            general_chat_enabled=(
-                general_chat_enabled
-                if general_chat_enabled is not None
-                else current.general_chat_enabled
+            llm_mode=llm_mode if llm_mode is not None else current.llm_mode,
+            llm_image_reply_enabled=(
+                llm_image_reply_enabled
+                if llm_image_reply_enabled is not None
+                else current.llm_image_reply_enabled
             ),
             mention_enabled=(
                 mention_enabled if mention_enabled is not None else current.mention_enabled
@@ -273,7 +291,8 @@ def _policy(group: ChatGroup, setting: GroupRuntimeSetting | None) -> GroupRunti
         chat_group_id=group.id,
         timezone=group.timezone,
         group_enabled=group.enabled,
-        general_chat_enabled=setting.general_chat_enabled,
+        llm_mode=LLMMode(setting.llm_mode),
+        llm_image_reply_enabled=setting.llm_image_reply_enabled,
         mention_enabled=setting.mention_enabled,
         direct_shortcuts_enabled=setting.direct_shortcuts_enabled,
         active_notifications_enabled=setting.active_notifications_enabled,
@@ -300,7 +319,8 @@ def _setting_values(
 ) -> dict[str, object]:
     return {
         "chat_group_id": policy.chat_group_id,
-        "general_chat_enabled": policy.general_chat_enabled,
+        "llm_mode": policy.llm_mode.value,
+        "llm_image_reply_enabled": policy.llm_image_reply_enabled,
         "mention_enabled": policy.mention_enabled,
         "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
         "active_notifications_enabled": policy.active_notifications_enabled,
@@ -326,5 +346,6 @@ def _setting_values(
 __all__ = [
     "GroupRuntimePolicy",
     "GroupRuntimeSettingsRepository",
+    "LLMMode",
     "PolicyVersionConflictError",
 ]

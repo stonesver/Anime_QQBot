@@ -75,9 +75,7 @@ def runtime_hint(*, general_chat_enabled: bool) -> str:
 def _event_key(event: Any) -> tuple[str, str]:
     message_obj = getattr(event, "message_obj", None)
     group_id = getattr(event, "group_id", None) or getattr(message_obj, "group_id", None)
-    message_id = getattr(event, "message_id", None) or getattr(
-        message_obj, "message_id", None
-    )
+    message_id = getattr(event, "message_id", None) or getattr(message_obj, "message_id", None)
     fallback = getattr(event, "unified_msg_origin", None) or str(id(event))
     return str(group_id or ""), str(message_id or fallback)
 

@@ -17,6 +17,12 @@ from anime_qqbot.groups.repository_v2 import ChatGroupRepository
 from anime_qqbot.groups.settings import (
     GroupRuntimePolicy,
     GroupRuntimeSettingsRepository,
+    LLMMode,
+)
+from anime_qqbot.interactions.mention_policy import (
+    MentionCommandPolicy,
+    MentionCommandPolicyRepository,
+    MentionPolicyValidationError,
 )
 from anime_qqbot.notifications.control import DeliveryControlRepository
 from anime_qqbot.notifications.outbox import OutboxRepository
@@ -68,6 +74,7 @@ class AdminService:
         self._audit = AdminAuditRepository(sessions)
         self._runtime_status = RuntimeComponentStatusRepository(sessions)
         self._anilist_mapping_policy = AniListMappingPolicyRepository(sessions)
+        self._mention_policy = MentionCommandPolicyRepository(sessions)
         self._polls = PollService(sessions)
         self._outbox = OutboxRepository(sessions)
         self._publications = ContentPublicationRepository(sessions)
@@ -400,14 +407,17 @@ class AdminService:
             ).all()
         items = []
         for group, setting in rows:
+            llm_mode = setting.llm_mode if setting else LLMMode.ANIME_ONLY.value
             items.append(
                 {
                     "id": str(group.id),
                     "group_id": group.external_group_id,
                     "timezone": group.timezone,
                     "enabled": group.enabled,
-                    "general_chat_enabled": (
-                        setting.general_chat_enabled if setting else False
+                    "llm_mode": llm_mode,
+                    "general_chat_enabled": llm_mode == LLMMode.GENERAL.value,
+                    "llm_image_reply_enabled": (
+                        setting.llm_image_reply_enabled if setting else True
                     ),
                     "mention_enabled": setting.mention_enabled if setting else True,
                     "direct_shortcuts_enabled": (
@@ -816,7 +826,8 @@ class AdminService:
         if group is None:
             raise AdminNotFoundError("group not found")
         allowed = {
-            "general_chat_enabled",
+            "llm_mode",
+            "llm_image_reply_enabled",
             "mention_enabled",
             "direct_shortcuts_enabled",
             "active_notifications_enabled",
@@ -836,7 +847,7 @@ class AdminService:
         if unknown:
             raise AdminValidationError(f"unsupported group fields: {sorted(unknown)}")
         boolean_fields = (
-            "general_chat_enabled",
+            "llm_image_reply_enabled",
             "mention_enabled",
             "direct_shortcuts_enabled",
             "active_notifications_enabled",
@@ -848,6 +859,9 @@ class AdminService:
         for field in boolean_fields:
             if field in changes and not isinstance(changes[field], bool):
                 raise AdminValidationError(f"{field} must be a boolean")
+        llm_mode = changes.get("llm_mode")
+        if "llm_mode" in changes and llm_mode not in {mode.value for mode in LLMMode}:
+            raise AdminValidationError("llm_mode must be disabled, anime_only, or general")
         for field in ("quiet_start_minute", "quiet_end_minute"):
             value = changes.get(field)
             if field in changes and (
@@ -881,7 +895,8 @@ class AdminService:
             group.id,
             expected_version=expected_version,
             now=datetime.now(UTC),
-            general_chat_enabled=_optional_bool(changes, "general_chat_enabled"),
+            llm_mode=LLMMode(str(llm_mode)) if llm_mode is not None else None,
+            llm_image_reply_enabled=_optional_bool(changes, "llm_image_reply_enabled"),
             mention_enabled=_optional_bool(changes, "mention_enabled"),
             direct_shortcuts_enabled=_optional_bool(changes, "direct_shortcuts_enabled"),
             active_notifications_enabled=_optional_bool(changes, "active_notifications_enabled"),
@@ -909,6 +924,64 @@ class AdminService:
             now=datetime.now(UTC),
         )
         return _policy_summary(changed)
+
+    async def mention_policy(self) -> dict[str, object]:
+        return _mention_policy_summary(await self._mention_policy.get())
+
+    async def update_mention_policy(
+        self,
+        *,
+        actor: str,
+        expected_version: int,
+        aliases: object,
+    ) -> dict[str, object]:
+        if not isinstance(aliases, dict):
+            raise AdminValidationError("aliases must be an object")
+        before = await self._mention_policy.get()
+        try:
+            changed = await self._mention_policy.update(
+                aliases,
+                expected_version=expected_version,
+                now=datetime.now(UTC),
+            )
+        except MentionPolicyValidationError as exc:
+            raise AdminValidationError(str(exc)) from exc
+        await self._audit.append(
+            actor=actor,
+            action="mention.policy.update",
+            target_type="mention_command_policy",
+            target_id="default",
+            before_summary=_mention_policy_summary(before),
+            after_summary=_mention_policy_summary(changed),
+            result="success",
+            error_summary=None,
+            now=datetime.now(UTC),
+        )
+        return _mention_policy_summary(changed)
+
+    async def restore_mention_policy(
+        self,
+        *,
+        actor: str,
+        expected_version: int,
+    ) -> dict[str, object]:
+        before = await self._mention_policy.get()
+        changed = await self._mention_policy.restore_defaults(
+            expected_version=expected_version,
+            now=datetime.now(UTC),
+        )
+        await self._audit.append(
+            actor=actor,
+            action="mention.policy.update",
+            target_type="mention_command_policy",
+            target_id="default",
+            before_summary=_mention_policy_summary(before),
+            after_summary=_mention_policy_summary(changed),
+            result="success",
+            error_summary=None,
+            now=datetime.now(UTC),
+        )
+        return _mention_policy_summary(changed)
 
     async def content_polls(self) -> list[dict[str, object]]:
         async with self._sessions() as session:
@@ -1331,7 +1404,9 @@ def _optional_int(values: dict[str, object], key: str) -> int | None:
 
 def _policy_summary(policy: GroupRuntimePolicy) -> dict[str, object]:
     return {
+        "llm_mode": policy.llm_mode.value,
         "general_chat_enabled": policy.general_chat_enabled,
+        "llm_image_reply_enabled": policy.llm_image_reply_enabled,
         "mention_enabled": policy.mention_enabled,
         "direct_shortcuts_enabled": policy.direct_shortcuts_enabled,
         "active_notifications_enabled": policy.active_notifications_enabled,
@@ -1347,6 +1422,14 @@ def _policy_summary(policy: GroupRuntimePolicy) -> dict[str, object]:
         "quiet_end_minute": policy.quiet_end_minute,
         "paused": policy.paused,
         "version": policy.version,
+    }
+
+
+def _mention_policy_summary(policy: MentionCommandPolicy) -> dict[str, object]:
+    return {
+        "aliases": policy.to_mapping(),
+        "version": policy.version,
+        "customized": policy.customized,
     }
 
 

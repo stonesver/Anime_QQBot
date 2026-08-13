@@ -51,7 +51,7 @@ class ScheduleReplyFactory:
             )
             if not rendered.succeeded or rendered.path is None:
                 return fallback
-            return Reply.from_image(rendered.path)
+            return Reply.from_image(rendered.path, fallback_text=_reply_text(fallback))
         except Exception as exc:
             logger.warning(
                 "weekly_schedule_reply.fallback",
@@ -79,7 +79,7 @@ class ScheduleReplyFactory:
             )
             if not rendered.succeeded or rendered.path is None:
                 return fallback
-            return Reply.from_image(rendered.path)
+            return Reply.from_image(rendered.path, fallback_text=_reply_text(fallback))
         except Exception as exc:
             logger.warning(
                 "daily_schedule_reply.fallback",
@@ -117,3 +117,7 @@ class ScheduleReplyFactory:
 
 
 __all__ = ["ScheduleReplyFactory"]
+
+
+def _reply_text(reply: Reply) -> str:
+    return "\n".join(block.text for block in reply.blocks if block.text).strip()

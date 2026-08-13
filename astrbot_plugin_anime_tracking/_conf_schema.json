@@ -17,7 +17,7 @@
   "interaction_gateway_enabled": {
     "type": "bool",
     "default": false,
-    "description": "启用 @机器人 与群短命令入口。升级后先在测试群灰度。"
+    "description": "启用旧版群内管理短语、无 @ 短命令和回复数字入口。固定 @ 短语由管理页按群控制，不依赖此开关。"
   },
   "send_governor_enabled": {
     "type": "bool",
