@@ -63,7 +63,7 @@ class ExternalEntry(Base):
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
-    external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    external_id: Mapped[str] = mapped_column(Text, nullable=False)
     url: Mapped[str | None] = mapped_column(Text, nullable=True)
     disabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

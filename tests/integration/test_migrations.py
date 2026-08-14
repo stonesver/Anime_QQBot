@@ -165,6 +165,26 @@ async def _llm_modes() -> list[tuple[str, bool]]:
         await engine.dispose()
 
 
+async def _store_external_entry_id(external_id: str) -> str:
+    engine = create_async_engine(DB_URL)
+    try:
+        async with engine.begin() as conn:
+            stored = await conn.scalar(
+                text(
+                    "INSERT INTO external_entries "
+                    "(id, provider, external_id, url, disabled, created_at, updated_at) "
+                    "VALUES "
+                    "('00000000-0000-0000-0000-000000000099', "
+                    "'animeschedule', :external_id, NULL, FALSE, now(), now()) "
+                    "RETURNING external_id"
+                ),
+                {"external_id": external_id},
+            )
+        return str(stored)
+    finally:
+        await engine.dispose()
+
+
 def test_empty_database_base_to_head() -> None:
     _run(_drop_public())
     _run_command("+head")
@@ -222,6 +242,14 @@ def test_0019_preserves_legacy_general_chat_choice() -> None:
     _run_command("+head")
 
     assert _run(_llm_modes()) == [("anime_only", True), ("general", True)]
+
+
+def test_head_accepts_long_opaque_external_entry_ids() -> None:
+    _run(_drop_public())
+    _run_command("+head")
+    external_id = "saijo-no-osewa-" + ("x" * 160)
+
+    assert _run(_store_external_entry_id(external_id)) == external_id
 
 
 def test_0004_snapshot_forward() -> None:
