@@ -7,7 +7,6 @@ match the current Bangumi snapshot. Ambiguous rows remain untouched.
 
 from __future__ import annotations
 
-import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Protocol
@@ -21,7 +20,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from anime_qqbot.catalog.adapters.animeschedule import AnimeScheduleCandidate
 from anime_qqbot.catalog.adapters.http_policy import ProviderError, ProviderErrorKind
 from anime_qqbot.catalog.animeschedule_mapping import (
+    normalize_title,
     select_unique_exact_candidate,
+    titles_match,
     validate_cross_id_candidate,
 )
 from anime_qqbot.catalog.models import AnimeDetail, AnimeSummary, LinkEvidenceType, LinkStatus
@@ -221,7 +222,6 @@ class AniListLinkDiscoveryService:
             snapshot.payload.get("title_jp"),
             snapshot.payload.get("title_cn"),
         )
-        known_titles = _normalized_titles(*search_titles)
         bridge_attempt: _DiscoveryAttempt | None = None
         if animeschedule_enabled and self._animeschedule is not None:
             bridge_attempt = await self._discover_via_animeschedule(
@@ -239,7 +239,7 @@ class AniListLinkDiscoveryService:
         fallback_attempt = await self._discover_via_anilist(
             anime_id,
             search_titles=search_titles,
-            known_titles=known_titles,
+            known_titles=tuple(search_titles),
             air_date=air_date,
             remaining_searches=remaining_searches,
         )
@@ -257,7 +257,7 @@ class AniListLinkDiscoveryService:
         anime_id: UUID,
         *,
         search_titles: list[str],
-        known_titles: set[str],
+        known_titles: tuple[str, ...],
         air_date: date,
         remaining_searches: int,
     ) -> _DiscoveryAttempt:
@@ -270,23 +270,55 @@ class AniListLinkDiscoveryService:
             search_results = await self._anilist.search(search_title)
             searches_used += 1
             non_adult = [candidate for candidate in search_results if not candidate.nsfw]
-            candidates = []
+            candidates: list[tuple[AnimeSummary, bool, int]] = []
             for candidate in non_adult:
-                titles_match = bool(
-                    known_titles.intersection(
-                        _normalized_titles(candidate.title_cn, candidate.title_jp)
-                    )
+                candidate_titles = tuple(
+                    title
+                    for title in (candidate.title_cn, candidate.title_jp, *candidate.title_aliases)
+                    if title
                 )
-                if titles_match:
+                candidate_titles_match = titles_match(known_titles, candidate_titles)
+                exact_title_match = bool(
+                    {normalize_title(title) for title in known_titles}
+                    & {normalize_title(title) for title in candidate_titles}
+                )
+                if candidate_titles_match:
                     title_matches += 1
                 if candidate.air_date == air_date:
                     date_matches += 1
-                if titles_match and candidate.air_date == air_date:
-                    candidates.append(candidate)
+                dates_compatible = (
+                    candidate.air_date is not None
+                    and abs((candidate.air_date - air_date).days) <= 1
+                )
+                if candidate_titles_match and dates_compatible:
+                    assert candidate.air_date is not None
+                    candidates.append(
+                        (candidate, exact_title_match, abs((candidate.air_date - air_date).days))
+                    )
             if len(candidates) == 1:
-                if await self._confirm(anime_id, candidates[0].subject_id):
+                candidate, exact_title_match, date_difference = candidates[0]
+                is_tolerant_match = not exact_title_match or date_difference > 0
+                if await self._confirm(
+                    anime_id,
+                    candidate.subject_id,
+                    method=(
+                        "anilist_unique_title_date_tolerance_v2"
+                        if is_tolerant_match
+                        else "anilist_exact_native_date_v1"
+                    ),
+                    confidence=0.88 if is_tolerant_match else 0.9,
+                ):
                     return _DiscoveryAttempt(
-                        _DiscoveryOutcome(True, "confirmed", "unique_exact_match", 1),
+                        _DiscoveryOutcome(
+                            True,
+                            "confirmed",
+                            (
+                                "unique_tolerant_match"
+                                if is_tolerant_match
+                                else "unique_exact_match"
+                            ),
+                            1,
+                        ),
                         searches_used=searches_used,
                     )
                 return _DiscoveryAttempt(
@@ -325,6 +357,7 @@ class AniListLinkDiscoveryService:
     ) -> _DiscoveryAttempt:
         assert self._animeschedule is not None
         searches_used = 0
+        successful_searches = 0
         candidates_by_route: dict[str, AnimeScheduleCandidate] = {}
         for search_title in search_titles:
             if searches_used >= remaining_searches:
@@ -334,18 +367,23 @@ class AniListLinkDiscoveryService:
             except ProviderError as exc:
                 if exc.kind is ProviderErrorKind.RATE_LIMITED:
                     raise
-                return _DiscoveryAttempt(
-                    _DiscoveryOutcome(
-                        False,
-                        "source_error",
-                        "animeschedule_search_error",
-                        0,
-                        error_cooldown_hours,
-                    ),
-                    searches_used + 1,
-                )
+                searches_used += 1
+                continue
             searches_used += 1
+            successful_searches += 1
             candidates_by_route.update({candidate.route: candidate for candidate in candidates})
+
+        if successful_searches == 0:
+            return _DiscoveryAttempt(
+                _DiscoveryOutcome(
+                    False,
+                    "source_error",
+                    "animeschedule_search_error",
+                    0,
+                    error_cooldown_hours,
+                ),
+                searches_used,
+            )
 
         selection = select_unique_exact_candidate(
             list(candidates_by_route.values()), tuple(search_titles)
@@ -376,7 +414,6 @@ class AniListLinkDiscoveryService:
         reason = validate_cross_id_candidate(
             candidate,
             detail,
-            known_titles=tuple(search_titles),
             bangumi_year=bangumi_air_date.year if bangumi_air_date is not None else None,
         )
         if reason is not None:
@@ -710,7 +747,7 @@ class AniListLinkDiscoveryService:
 
 
 def _normalize_title(title: str) -> str:
-    return "".join(unicodedata.normalize("NFKC", title).casefold().split())
+    return normalize_title(title)
 
 
 def _normalized_titles(*values: object) -> set[str]:

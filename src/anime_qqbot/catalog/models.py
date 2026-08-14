@@ -54,6 +54,7 @@ class AnimeSummary:
     air_date: date | None
     nsfw: bool = False
     image_url: str | None = None
+    title_aliases: tuple[str, ...] = ()
 
     @property
     def title(self) -> str:

@@ -57,6 +57,22 @@ class _AnimeSchedule:
         return self.result
 
 
+class _PerQueryAnimeSchedule:
+    def __init__(
+        self,
+        results: dict[str, list[AnimeScheduleCandidate] | ProviderError],
+    ) -> None:
+        self.results = results
+        self.calls: list[str] = []
+
+    async def search(self, query: str) -> list[AnimeScheduleCandidate]:
+        self.calls.append(query)
+        result = self.results[query]
+        if isinstance(result, ProviderError):
+            raise result
+        return result
+
+
 @pytest.fixture
 async def session_factory():
     engine = create_async_engine(os.environ["TEST_DATABASE_URL"])
@@ -217,3 +233,81 @@ async def test_server_error_records_specific_long_cooldown(session_factory) -> N
     assert assessment is not None
     assert assessment.reason == "animeschedule_search_error"
     assert assessment.retry_after == now + timedelta(hours=168)
+
+
+async def test_later_title_error_keeps_an_earlier_unique_candidate(session_factory) -> None:
+    now = datetime(2026, 8, 12, 8, tzinfo=UTC)
+    anime_id = await seed_target(session_factory, now)
+    async with session_factory() as session, session.begin():
+        snapshot = (await session.execute(select(SourceSnapshot))).scalar_one()
+        snapshot.payload = {
+            **snapshot.payload,
+            "title_jp": "Thunder 3",
+            "title_cn": "雷霆 3",
+        }
+    anilist = _AniList(detail())
+    animeschedule = _PerQueryAnimeSchedule(
+        {
+            "Thunder 3": [candidate()],
+            "雷霆 3": ProviderError(ProviderErrorKind.TEMPORARY, "animeschedule 500"),
+        }
+    )
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=anilist,
+        sync=AniListSyncService(
+            anilist,  # type: ignore[arg-type]
+            CatalogWriteRepository(session_factory),
+            FrozenClock(now),
+        ),
+        clock=FrozenClock(now),
+        animeschedule=animeschedule,
+    )
+
+    result = await discovery.run_once(limit=2, animeschedule_enabled=True)
+
+    async with session_factory() as session:
+        assessment = await session.get(AniListMappingAssessment, anime_id)
+    assert result.links_confirmed == 1
+    assert result.searches_used == 2
+    assert assessment is None
+    assert animeschedule.calls == ["Thunder 3", "雷霆 3"]
+
+
+async def test_one_successful_empty_search_is_not_recorded_as_a_source_error(
+    session_factory,
+) -> None:
+    now = datetime(2026, 8, 12, 8, tzinfo=UTC)
+    anime_id = await seed_target(session_factory, now)
+    async with session_factory() as session, session.begin():
+        snapshot = (await session.execute(select(SourceSnapshot))).scalar_one()
+        snapshot.payload = {
+            **snapshot.payload,
+            "title_jp": "Thunder 3",
+            "title_cn": "雷霆 3",
+        }
+    anilist = _AniList(detail())
+    animeschedule = _PerQueryAnimeSchedule(
+        {
+            "Thunder 3": [],
+            "雷霆 3": ProviderError(ProviderErrorKind.TEMPORARY, "animeschedule 500"),
+        }
+    )
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=anilist,
+        sync=AniListSyncService(
+            anilist,  # type: ignore[arg-type]
+            CatalogWriteRepository(session_factory),
+            FrozenClock(now),
+        ),
+        clock=FrozenClock(now),
+        animeschedule=animeschedule,
+    )
+
+    await discovery.run_once(limit=2, animeschedule_enabled=True)
+
+    async with session_factory() as session:
+        assessment = await session.get(AniListMappingAssessment, anime_id)
+    assert assessment is not None
+    assert assessment.reason == "animeschedule_search_empty"

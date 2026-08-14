@@ -682,7 +682,7 @@ class AdminService:
             "animeschedule_empty_cooldown_hours": policy.animeschedule_empty_cooldown_hours,
             "animeschedule_error_cooldown_hours": policy.animeschedule_error_cooldown_hours,
             "animeschedule_token_configured": self._animeschedule_token_configured,
-            "matching_rule": "animeschedule_cross_id_then_anilist_strict",
+            "matching_rule": "animeschedule_cross_id_then_anilist_tolerant_v2",
             "last_success_at": _iso(state.last_success_at) if state else None,
             "last_error": _safe_error(state.last_error) if state else None,
             "assessment_counts": {str(reason): int(count) for reason, count in outcomes},
@@ -782,7 +782,7 @@ class AdminService:
         )
         return {
             **current.__dict__,
-            "matching_rule": "animeschedule_cross_id_then_anilist_strict",
+            "matching_rule": "animeschedule_cross_id_then_anilist_tolerant_v2",
         }
 
     async def jobs(self) -> list[dict[str, object]]:

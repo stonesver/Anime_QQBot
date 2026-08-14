@@ -52,6 +52,44 @@ async def test_search_returns_mapped_summaries() -> None:
 
 
 @respx.mock
+async def test_search_exposes_all_title_aliases() -> None:
+    route = respx.post("https://graphql.anilist.co").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": {
+                    "Page": {
+                        "media": [
+                            {
+                                "id": 204060,
+                                "title": {
+                                    "romaji": "Tetsunabe no Jan!",
+                                    "english": "Iron Wok Jan!",
+                                    "native": "鉄鍋のジャン！",
+                                },
+                                "synonyms": ["炒翻天"],
+                                "startDate": {"year": 2026, "month": 7, "day": 5},
+                                "isAdult": False,
+                            }
+                        ]
+                    }
+                }
+            },
+        )
+    )
+    async with AniListClient() as client:
+        results = await client.search("鉄鍋のジャン")
+
+    assert "synonyms" in route.calls[0].request.content.decode()
+    assert results[0].title_aliases == (
+        "Tetsunabe no Jan!",
+        "Iron Wok Jan!",
+        "鉄鍋のジャン！",
+        "炒翻天",
+    )
+
+
+@respx.mock
 async def test_airing_schedule_parses_known_episodes() -> None:
     respx.post("https://graphql.anilist.co").mock(
         return_value=httpx.Response(200, json=fixture("airing_schedule.json"))

@@ -178,6 +178,7 @@ class AniListClient:
             media(type: ANIME, search: $search, isAdult: false) {
               id
               title { romaji english native }
+              synonyms
               type format episodes
               startDate { year month day }
               isAdult
@@ -250,6 +251,7 @@ class AniListClient:
             air_date=cls._date_from(start_mapping) if start_mapping is not None else None,
             nsfw=bool(payload.get("isAdult", False)),
             image_url=cls._cover_image(payload.get("coverImage")),
+            title_aliases=cls._title_aliases(payload, titles),
         )
 
     @staticmethod
@@ -258,6 +260,24 @@ class AniListClient:
         if not isinstance(value, Mapping):
             return {}
         return dict(value)
+
+    @classmethod
+    def _title_aliases(
+        cls,
+        payload: Mapping[str, object],
+        titles: Mapping[str, object],
+    ) -> tuple[str, ...]:
+        values = [
+            value
+            for key in ("romaji", "english", "native")
+            if (value := cls._optional_string(titles.get(key))) is not None
+        ]
+        synonyms = payload.get("synonyms")
+        if isinstance(synonyms, Sequence) and not isinstance(synonyms, (str, bytes)):
+            values.extend(
+                value for item in synonyms if (value := cls._optional_string(item)) is not None
+            )
+        return tuple(dict.fromkeys(values))
 
     @classmethod
     def _titled(cls, titles: Mapping[str, object], keys: tuple[str, ...]) -> str:

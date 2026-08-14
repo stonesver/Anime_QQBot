@@ -179,11 +179,13 @@ class AnimeScheduleClient:
     @classmethod
     def _aliases(cls, row: Mapping[str, Any], title: str) -> tuple[str, ...]:
         values: list[str] = [title]
+        nested_names = row.get("names")
+        names = nested_names if isinstance(nested_names, Mapping) else row
         for key in ("romaji", "english", "native", "abbreviation"):
-            value = cls._text(row.get(key))
+            value = cls._text(names.get(key))
             if value:
                 values.append(value)
-        synonyms = row.get("synonyms")
+        synonyms = names.get("synonyms")
         if isinstance(synonyms, Sequence) and not isinstance(synonyms, (str, bytes)):
             values.extend(value for item in synonyms if (value := cls._text(item)))
         return tuple(dict.fromkeys(values))

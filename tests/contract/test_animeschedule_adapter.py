@@ -44,6 +44,44 @@ async def test_search_uses_bearer_token_and_maps_cross_ids() -> None:
 
 
 @respx.mock
+async def test_search_maps_nested_names_from_v3_response() -> None:
+    respx.get("https://animeschedule.net/api/v3/anime").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "page": 1,
+                "totalAmount": 1,
+                "anime": [
+                    {
+                        "route": "super-no-ura-de-yani-suu-futari",
+                        "title": "Super no Ura de Yani Suu Futari",
+                        "names": {
+                            "romaji": "Super no Ura de Yani Suu Futari",
+                            "english": "Smoking Behind the Supermarket with You",
+                            "native": "スーパーの裏でヤニ吸うふたり",
+                            "abbreviation": "Yanisuu",
+                            "synonyms": ["Smoking Behind the Supermarket"],
+                        },
+                    }
+                ],
+            },
+        )
+    )
+    async with AnimeScheduleClient(
+        AnimeScheduleConfig(token=SecretStr("application-token"))
+    ) as client:
+        candidates = await client.search("スーパーの裏でヤニ吸うふたり")
+
+    assert candidates[0].aliases == (
+        "Super no Ura de Yani Suu Futari",
+        "Smoking Behind the Supermarket with You",
+        "スーパーの裏でヤニ吸うふたり",
+        "Yanisuu",
+        "Smoking Behind the Supermarket",
+    )
+
+
+@respx.mock
 async def test_raw_timetable_requests_tokyo_timezone_and_maps_exact_airing() -> None:
     route = respx.get("https://animeschedule.net/api/v3/timetables/raw").mock(
         return_value=httpx.Response(200, json=fixture("timetable.json"))

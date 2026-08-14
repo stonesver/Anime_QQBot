@@ -485,6 +485,132 @@ async def test_discovery_prioritizes_unmapped_shows_airing_within_seven_days(
 
 
 @pytest.mark.asyncio
+async def test_discovery_accepts_a_unique_alias_with_one_day_date_difference(
+    session_factory,
+) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    anime_id = uuid4()
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=anime_id,
+        entry_id=uuid4(),
+        title="鉄鍋のジャン",
+        air_date=date(2026, 7, 5),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    candidate = AnimeSummary(
+        subject_id=204060,
+        title_cn="鉄鍋のジャン！",
+        title_jp="Tetsunabe no Jan!",
+        air_date=date(2026, 7, 6),
+        nsfw=False,
+        title_aliases=("Tetsunabe no Jan!", "Iron Wok Jan!", "鉄鍋のジャン！"),
+    )
+    stub = _StubAniList(
+        {204060: _detail(204060)},
+        searches={"鉄鍋のジャン": [candidate]},
+    )
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    result = await discovery.run_once(limit=1)
+
+    assert result.links_confirmed == 1
+    async with session_factory() as session:
+        assert await session.get(AniListMappingAssessment, anime_id) is None
+        link = (
+            await session.execute(
+                select(AnimeSourceLink)
+                .join(ExternalEntry, ExternalEntry.id == AnimeSourceLink.external_entry_id)
+                .where(AnimeSourceLink.anime_id == anime_id)
+                .where(ExternalEntry.provider == "anilist")
+            )
+        ).scalar_one()
+    assert link.method == "anilist_unique_title_date_tolerance_v2"
+    assert link.confidence == 0.88
+
+
+@pytest.mark.asyncio
+async def test_discovery_rejects_a_different_season_with_the_same_date(session_factory) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    anime_id = uuid4()
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=anime_id,
+        entry_id=uuid4(),
+        title="Thunder 3",
+        air_date=date(2026, 7, 5),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    candidate = AnimeSummary(
+        subject_id=999,
+        title_cn="Thunder 3 Season 2",
+        title_jp="Thunder 3 Season 2",
+        air_date=date(2026, 7, 5),
+        nsfw=False,
+        title_aliases=("Thunder 3 Season 2",),
+    )
+    stub = _StubAniList({}, searches={"Thunder 3": [candidate]})
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    result = await discovery.run_once(limit=1)
+
+    assert result.links_confirmed == 0
+    async with session_factory() as session:
+        assessment = await session.get(AniListMappingAssessment, anime_id)
+    assert assessment is not None
+    assert assessment.reason == "title_not_matched"
+
+
+@pytest.mark.asyncio
+async def test_discovery_keeps_a_two_day_date_difference_for_review(session_factory) -> None:
+    now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    anime_id = uuid4()
+    await _seed_discovery_target(
+        session_factory,
+        anime_id=anime_id,
+        entry_id=uuid4(),
+        title="日期冲突",
+        air_date=date(2026, 7, 5),
+        next_air_date=date(2026, 8, 5),
+        now=now,
+    )
+    candidate = AnimeSummary(
+        subject_id=998,
+        title_cn="日期冲突",
+        title_jp="日期冲突",
+        air_date=date(2026, 7, 7),
+        nsfw=False,
+    )
+    stub = _StubAniList({}, searches={"日期冲突": [candidate]})
+    discovery = AniListLinkDiscoveryService(
+        sessions=session_factory,
+        anilist=stub,
+        sync=AniListSyncService(stub, CatalogWriteRepository(session_factory), FrozenClock(now)),
+        clock=FrozenClock(now),
+    )
+
+    result = await discovery.run_once(limit=1)
+
+    assert result.links_confirmed == 0
+    async with session_factory() as session:
+        assessment = await session.get(AniListMappingAssessment, anime_id)
+    assert assessment is not None
+    assert assessment.reason == "first_air_date_mismatch"
+
+
+@pytest.mark.asyncio
 async def test_discovery_records_no_candidate_and_respects_retry_cooldown(session_factory) -> None:
     now = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
     anime_id = uuid4()

@@ -244,7 +244,7 @@ function mappingOutcome(statusName, candidateCount) {
 
 function mappingEvidence(item) {
   if (item.kind !== "assessment") return `${item.evidence_type} / ${item.method}`;
-  const labels = { no_search_candidate: "AniList 搜索未返回可用候选", first_air_date_mismatch: "标题能对应，但首播日不一致", title_not_matched: "首播日可对应，但标题未精确匹配", multiple_exact_candidates: "多个候选同时满足严格条件", missing_bangumi_title_or_air_date: "Bangumi 缺少日文标题或首播日", candidate_sync_failed: "AniList 候选详情未能同步" };
+  const labels = { no_search_candidate: "AniList 搜索未返回可用候选", first_air_date_mismatch: "标题能对应，但首播日相差超过 1 天", title_not_matched: "首播日可对应，但标题未安全匹配", multiple_exact_candidates: "多个候选同时满足自动确认条件", missing_bangumi_title_or_air_date: "Bangumi 缺少日文标题或首播日", candidate_sync_failed: "AniList 候选详情未能同步" };
   return `${labels[item.evidence_type] || item.evidence_type}；最近尝试 ${formatTime(item.attempted_at)}`;
 }
 
@@ -280,18 +280,18 @@ async function loadSources() {
 
 function renderMappingPolicy(policy) {
   const outcomes = Object.entries(policy.assessment_counts || {}).map(([reason, count]) =>
-    `${escapeHtml(mappingReason(reason))} ${escapeHtml(count)}`).join(" · ") || "尚无严格映射失败记录";
+    `${escapeHtml(mappingReason(reason))} ${escapeHtml(count)}`).join(" · ") || "尚无自动映射失败记录";
   $("#mapping-policy-content").innerHTML = `<div class="policy-fields">
     <label>AnimeSchedule 状态<span><input id="animeschedule-enabled" type="checkbox" ${policy.animeschedule_enabled ? "checked" : ""} /> 启用映射桥与原始排期</span><small>Token：${policy.animeschedule_token_configured ? "已配置" : "未配置"}；仅 Bot 持有者可修改。</small></label>
     <label>单轮搜索预算<input id="mapping-query-budget" type="number" min="1" max="30" value="${escapeHtml(policy.query_budget)}" /><small>实际 AniList 搜索请求数，上限 30。</small></label>
     <label>近期优先窗口<input id="mapping-priority-window" type="number" min="1" max="14" value="${escapeHtml(policy.priority_window_days)}" /><small>未来 1–14 天内的番剧优先尝试。</small></label>
-    <label>失败重试冷却<input id="mapping-retry-cooldown" type="number" min="1" max="168" value="${escapeHtml(policy.retry_cooldown_hours)}" /><small>严格不匹配后等待的小时数。</small></label>
+    <label>失败重试冷却<input id="mapping-retry-cooldown" type="number" min="1" max="168" value="${escapeHtml(policy.retry_cooldown_hours)}" /><small>自动匹配失败后等待的小时数。</small></label>
     <label>AnimeSchedule 共享预算<input id="animeschedule-query-budget" type="number" min="1" max="30" value="${escapeHtml(policy.animeschedule_query_budget)}" /><small>桥接搜索与 AniList 后备共享的单轮上限。</small></label>
     <label>AnimeSchedule 优先窗口<input id="animeschedule-priority-window" type="number" min="1" max="14" value="${escapeHtml(policy.animeschedule_priority_window_days)}" /><small>未来 1–14 天内的缺映射番剧优先处理。</small></label>
     <label>空结果冷却<input id="animeschedule-empty-cooldown" type="number" min="1" max="720" value="${escapeHtml(policy.animeschedule_empty_cooldown_hours)}" /><small>正常空结果的等待小时数。</small></label>
     <label>来源错误冷却<input id="animeschedule-error-cooldown" type="number" min="1" max="720" value="${escapeHtml(policy.animeschedule_error_cooldown_hours)}" /><small>5xx 或无效响应的等待小时数。</small></label>
   </div>
-  <p class="policy-note">映射规则：AnimeSchedule 唯一精确标题 + 显式 AniList ID + 同年；失败时回到 AniList 标题、首播日严格匹配。</p>
+  <p class="policy-note">映射规则：标题支持别名、边缘标点和明确副标题；季度、Part、剧场版等身份标记仍严格区分。AniList 首播日允许 ±1 天；AnimeSchedule 显式 AniList ID 需校验一致且同年。</p>
   <p class="policy-note">AnimeSchedule：最近成功 ${formatTime(policy.animeschedule_last_success_at)}；确认链接 ${escapeHtml(policy.animeschedule_confirmed_links)}；跨站补回 ${escapeHtml(policy.animeschedule_cross_id_links)}；精确排期 ${escapeHtml(policy.animeschedule_exact_occurrences)}；时间冲突 ${escapeHtml(policy.schedule_conflicts)}。${policy.animeschedule_last_error ? `错误：${escapeHtml(policy.animeschedule_last_error)}` : "当前无错误摘要"}。</p>
   <p class="policy-note">AniList：最近成功 ${formatTime(policy.last_success_at)}；${policy.last_error ? `错误：${escapeHtml(policy.last_error)}` : "当前无错误摘要"}。</p>
   <p class="policy-note">失败归因：${outcomes}</p>
@@ -299,7 +299,7 @@ function renderMappingPolicy(policy) {
 }
 
 function mappingReason(reason) {
-  const labels = { no_search_candidate: "无搜索候选", first_air_date_mismatch: "首播日不一致", title_not_matched: "标题未精确匹配", multiple_exact_candidates: "候选不唯一", missing_bangumi_title_or_air_date: "Bangumi 数据不完整", candidate_sync_failed: "候选同步失败", animeschedule_search_empty: "AnimeSchedule 空结果", animeschedule_search_error: "AnimeSchedule 来源错误", animeschedule_ambiguous: "AnimeSchedule 候选不唯一", animeschedule_cross_id_invalid: "跨站 ID 无效", animeschedule_year_mismatch: "首播年份冲突", animeschedule_nsfw_rejected: "成人内容已拒绝" };
+  const labels = { no_search_candidate: "无搜索候选", first_air_date_mismatch: "首播日相差超过 1 天", title_not_matched: "标题未安全匹配", multiple_exact_candidates: "候选不唯一", missing_bangumi_title_or_air_date: "Bangumi 数据不完整", candidate_sync_failed: "候选同步失败", animeschedule_search_empty: "AnimeSchedule 空结果", animeschedule_search_error: "AnimeSchedule 来源错误", animeschedule_ambiguous: "AnimeSchedule 候选不唯一", animeschedule_cross_id_invalid: "跨站 ID 无效", animeschedule_year_mismatch: "首播年份冲突", animeschedule_nsfw_rejected: "成人内容已拒绝" };
   return labels[reason] || reason;
 }
 

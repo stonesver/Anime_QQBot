@@ -320,7 +320,7 @@ async def test_admin_mapping_policy_is_persisted_and_audited(session_factory) ->
         "animeschedule_priority_window_days": 7,
         "animeschedule_empty_cooldown_hours": 168,
         "animeschedule_error_cooldown_hours": 168,
-        "matching_rule": "animeschedule_cross_id_then_anilist_strict",
+        "matching_rule": "animeschedule_cross_id_then_anilist_tolerant_v2",
     }
     assert (await service.mapping_policy())["query_budget"] == 8
     async with session_factory() as session:
