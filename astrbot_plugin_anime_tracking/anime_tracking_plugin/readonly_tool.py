@@ -45,6 +45,13 @@ _INTENT_KINDS: dict[ReadonlyAnimeAction, IntentKind] = {
     ReadonlyAnimeAction.MY_SUBSCRIPTIONS: IntentKind.MY_SUBSCRIPTIONS,
 }
 
+_SEASON_NAMES: dict[str, str] = {
+    "冬": "winter",
+    "春": "spring",
+    "夏": "summer",
+    "秋": "autumn",
+}
+
 
 @dataclass(frozen=True)
 class ReadonlyAnimeRequest:
@@ -82,7 +89,7 @@ class ReadonlyAnimeRequest:
             except ValueError as exc:
                 raise ValueError("date must use YYYY-MM-DD") from exc
             normalized_date = parsed_date.isoformat()
-        if season is not None and season not in {"冬", "春", "夏", "秋"}:
+        if season is not None and season not in _SEASON_NAMES:
             raise ValueError("season must be one of 冬, 春, 夏, 秋")
         if year is not None and (isinstance(year, bool) or not 2000 <= year <= 2100):
             raise ValueError("year must be between 2000 and 2100")
@@ -113,7 +120,7 @@ class ReadonlyAnimeRequest:
             query=normalized_query,
             target_date=normalized_date,
             year=year,
-            season=season,
+            season=_SEASON_NAMES.get(season) if season is not None else None,
             episode=normalized_episode,
             selection=selection,
         )
@@ -281,7 +288,7 @@ def _optional_text(value: str | None) -> str | None:
 
 
 def _season_for_month(month: int) -> str:
-    return ("冬", "春", "夏", "秋")[(month - 1) // 3]
+    return ("winter", "spring", "summer", "autumn")[(month - 1) // 3]
 
 
 _NOT_FOUND_MARKERS = (

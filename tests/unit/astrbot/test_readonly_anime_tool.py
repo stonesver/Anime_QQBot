@@ -39,7 +39,7 @@ class FakeReadonlyAdapter:
         (
             {"action": "season", "year": 2026, "season": "夏"},
             IntentKind.SEASON,
-            (2026, "夏"),
+            (2026, "summer"),
         ),
         ({"action": "search", "query": "胆大党"}, IntentKind.SEARCH, "胆大党"),
         ({"action": "detail", "selection": 2}, IntentKind.DETAIL, 2),
@@ -136,7 +136,7 @@ async def test_executor_resolves_current_season_in_group_timezone() -> None:
     )
 
     assert adapter.intent.season_year == 2026
-    assert adapter.intent.season_name == "夏"
+    assert adapter.intent.season_name == "summer"
 
 
 @pytest.mark.asyncio
